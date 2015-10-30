@@ -50,7 +50,7 @@ public class IndoorLocalization extends Activity {
 
     private static final int P0 = -38;
     private static final float MU = (float) 2.5;
-    private static final float NLOS_DETECTION_THRESHOLD = (float) 1.2;
+    private static final float NLOS_DETECTION_THRESHOLD = (float) 1.4;
 
     // Path Loss Model
     private static final Anchor[] ANCHORS = {
@@ -481,29 +481,7 @@ public class IndoorLocalization extends Activity {
 
                 plotCurrentLocation();
                 previousLocation.setLocation(currentLocation);
-                /*
-
-
-                if (isPDRDurationExpired()) {
-                    // PDR duration expired 되어 결정할 때
-                    max_d = updateLSLocation();
-                    if (isLOS(max_d)) {
-                        PDRLocation.setLocation(LSLocation);
-                        currentLocation.setLocation(LSLocation);
-                    } else {
-                        currentLocation.setLocation(PDRLocation);
-                    }
-                    isNewStep = true;
-                } else if (!isPDRDurationExpired()) {
-                    // 그냥 PDR만 사용할 때
-                    currentLocation.setLocation(PDRLocation);
-                    isSelected = false;
-                }
-
-                plotCurrentLocation();
-                previousLocation.setLocation(currentLocation);
-                */
-            }
+             }
         }catch (Exception e){
             tv_info.setText(e.toString());
         }
@@ -563,8 +541,7 @@ public class IndoorLocalization extends Activity {
         acc_p = acc_norm;
 
         tv_info.append("Current Location: " + currentLocation.getX() + "," + currentLocation.getY() + "\n");
-        tv_info.append("LS Location: " + LSLocation.getX() + "," + LSLocation.getY() + "\n");
-        tv_info.append("Current Angle: " + azimuth * (180 / Math.PI) + "\n");
+        tv_info.append("Current Angle: " + azimuth * (180 / Math.PI) + ", Step Length: " + steplength + "\n");
         for (int i : anchors.keySet()) {
             tv_info.append("Source: " + i + ", Raw RSS: " + anchors.get(i).getRawRSS() + ", avg RSS: " + anchors.get(i).getRSS() + "\n");
         }
@@ -643,23 +620,12 @@ public class IndoorLocalization extends Activity {
     }
 
     private void plotCurrentLocation() {
-        /*
-        int previous_x_converted = Math.round(previousLocation.getX() * ((screen_width / 2) / anchor_dist_x)) + (screen_width / 4);
-        int previous_y_converted = screen_width - Math.round(previousLocation.getY() * ((screen_width / 2) / anchor_dist_y)) - (screen_width / 4);
-        canvas_map.drawCircle(previous_x_converted, previous_y_converted, SIZE_MARKER, BLUE);
-        */
-
         clearMap();
 
         int current_x_converted = Math.round(currentLocation.getX() * ((screen_width / 2) / anchor_dist_x)) + (screen_width / 4);
         int current_y_converted = screen_width - Math.round(currentLocation.getY() * ((screen_width / 2) / anchor_dist_y)) - (screen_width / 4);
         canvas_map.drawCircle(current_x_converted, current_y_converted, SIZE_MARKER, RED);
 
-        /*
-        if (!isFirstStep()) {
-            canvas_map.drawLine(previous_x_converted, previous_y_converted, current_x_converted, current_y_converted, LINE);
-        }
-        */
         needPlot = false;
         imgv_map.invalidate();
     }
@@ -691,13 +657,4 @@ public class IndoorLocalization extends Activity {
         if (n_step == -1) return true;
         else return false;
     }
-
-    /*
-    private boolean isPDRDurationExpired() {
-        if (PDR_DURATION == 0 || (n_step % PDR_DURATION == 0 && !isSelected)) {
-            isSelected = true;
-            return true;
-        } else return false;
-    }
-    */
 }
