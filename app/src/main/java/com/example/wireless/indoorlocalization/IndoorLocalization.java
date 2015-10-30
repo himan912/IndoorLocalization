@@ -48,23 +48,25 @@ public class IndoorLocalization extends Activity {
     /*---------- Fixed Parameters ----------*/
     private static final byte[] PACKET_HEADER = new BigInteger("7e4500ffff0000080089", 16).toByteArray();
 
-    private static final int P0 = -43;
+    private static final int P0 = -38;
     private static final float MU = (float) 2.5;
+    private static final float NLOS_DETECTION_THRESHOLD = (float) 1.2;
+
     // Path Loss Model
     private static final Anchor[] ANCHORS = {
             new Anchor(0, 0, P0, MU),
 
             new Anchor(0, 0, P0, MU),
             new Anchor(3, 0, P0, MU),
+            new Anchor(6, 0, P0, MU),
+            new Anchor(6, 3, P0, MU),
+
             new Anchor(3, 3, P0, MU),
             new Anchor(0, 3, P0, MU),
-
-            new Anchor(5, 2.5, P0, MU),
-            new Anchor(4.5, 5, P0, MU),
     };
 
-    private static final int PDR_DURATION = 5;
-    private static final float NLOS_DETECTION_THRESHOLD = (float) 1.1;
+    //private static final int PDR_DURATION = 5;
+
     // PDR Parameters
 
     private static final int SIZE_MARKER = 5;
@@ -344,7 +346,7 @@ public class IndoorLocalization extends Activity {
 
                 if (!isCalibrated) {
                     plotAnchors();
-                    tv_info.setText("Calibrating.." + "\n");
+                    tv_info.setText("RSS Calibrating.." + "\n");
                     for (Anchor loc : anchors.values()) {
                         if (!loc.isCalibrated()) {
                             return;
@@ -363,7 +365,7 @@ public class IndoorLocalization extends Activity {
                     case Sensor.TYPE_LINEAR_ACCELERATION:
                         if (!isNewStep) {
                             data_acc = event.values.clone();
-                            updatePosition();
+                            updateLocation();
                         }
                         break;
                     case Sensor.TYPE_GYROSCOPE:
@@ -399,8 +401,6 @@ public class IndoorLocalization extends Activity {
         angle_gyro = 0;
         angle_cur = 0;
         angle_mag_prev = 0;
-        anchor_dist_x = 1;
-        anchor_dist_y = 1;
 
         n_step = -1;
         acc_p = -10;
@@ -442,6 +442,70 @@ public class IndoorLocalization extends Activity {
 
             // target orientation in absolute coordinate system
             isNewStep = false;
+        }
+    }
+
+    private void updateLocation() {
+        try {
+            max_d = updateLSLocation();
+            if (data_acc != null && data_gyro != null) {
+                updatePDRLocation();
+            }
+
+
+
+            if (isFirstStep()) {
+                if(isLOS(max_d)){
+                    PDRLocation.setLocation(LSLocation);
+                    currentLocation.setLocation(LSLocation);
+
+                    if (needPlot) {
+                        plotCurrentLocation();
+                        previousLocation.setLocation(currentLocation);
+                        n_step++;
+                    }
+                }
+                else{
+                    tv_info.setText("Locating Initial Location...");
+                }
+            }
+
+            if (!isFirstStep() && needPlot) {
+                max_d = updateLSLocation();
+                if (isLOS(max_d)) {
+                    PDRLocation.setLocation(LSLocation);
+                    currentLocation.setLocation(LSLocation);
+                } else {
+                    currentLocation.setLocation(PDRLocation);
+                }
+
+                plotCurrentLocation();
+                previousLocation.setLocation(currentLocation);
+                /*
+
+
+                if (isPDRDurationExpired()) {
+                    // PDR duration expired 되어 결정할 때
+                    max_d = updateLSLocation();
+                    if (isLOS(max_d)) {
+                        PDRLocation.setLocation(LSLocation);
+                        currentLocation.setLocation(LSLocation);
+                    } else {
+                        currentLocation.setLocation(PDRLocation);
+                    }
+                    isNewStep = true;
+                } else if (!isPDRDurationExpired()) {
+                    // 그냥 PDR만 사용할 때
+                    currentLocation.setLocation(PDRLocation);
+                    isSelected = false;
+                }
+
+                plotCurrentLocation();
+                previousLocation.setLocation(currentLocation);
+                */
+            }
+        }catch (Exception e){
+            tv_info.setText(e.toString());
         }
     }
 
@@ -518,8 +582,6 @@ public class IndoorLocalization extends Activity {
         HashMap<Integer, Float> dist = new HashMap<>(n);
 
         try {
-            tv_info.setText("");
-
             for (int i : anchors.keySet()) {
                 dist.put(i, (float) Math.pow(10, (anchors.get(i).getP0() - anchors.get(i).getRSS()) / (10 * anchors.get(i).getMU())));
             }
@@ -580,59 +642,24 @@ public class IndoorLocalization extends Activity {
             return false;
     }
 
-    private void updatePosition() {
-        if (data_acc != null && data_gyro != null) {
-            //max_d = updateLSLocation();
-            updatePDRLocation();
-        }
-
-        if (isFirstStep()) {
-            // 가장 처음에
-            max_d = updateLSLocation();
-            PDRLocation.setLocation(LSLocation);
-            currentLocation.setLocation(LSLocation);
-
-            if (needPlot) {
-                plotCurrentLocation();
-                previousLocation.setLocation(currentLocation);
-                n_step++;
-            }
-        }
-
-        if (!isFirstStep() && needPlot) {
-            if (isPDRDurationExpired()) {
-                // PDR duration expired 되어 결정할 때
-                max_d = updateLSLocation();
-                if (isLOS(max_d)) {
-                    PDRLocation.setLocation(LSLocation);
-                    currentLocation.setLocation(LSLocation);
-                } else {
-                    currentLocation.setLocation(PDRLocation);
-                }
-                isNewStep = true;
-            } else if (!isPDRDurationExpired()) {
-                // 그냥 PDR만 사용할 때
-                currentLocation.setLocation(PDRLocation);
-                isSelected = false;
-            }
-
-            plotCurrentLocation();
-            previousLocation.setLocation(currentLocation);
-        }
-    }
-
     private void plotCurrentLocation() {
+        /*
         int previous_x_converted = Math.round(previousLocation.getX() * ((screen_width / 2) / anchor_dist_x)) + (screen_width / 4);
         int previous_y_converted = screen_width - Math.round(previousLocation.getY() * ((screen_width / 2) / anchor_dist_y)) - (screen_width / 4);
         canvas_map.drawCircle(previous_x_converted, previous_y_converted, SIZE_MARKER, BLUE);
+        */
+
+        clearMap();
 
         int current_x_converted = Math.round(currentLocation.getX() * ((screen_width / 2) / anchor_dist_x)) + (screen_width / 4);
         int current_y_converted = screen_width - Math.round(currentLocation.getY() * ((screen_width / 2) / anchor_dist_y)) - (screen_width / 4);
         canvas_map.drawCircle(current_x_converted, current_y_converted, SIZE_MARKER, RED);
 
+        /*
         if (!isFirstStep()) {
             canvas_map.drawLine(previous_x_converted, previous_y_converted, current_x_converted, current_y_converted, LINE);
         }
+        */
         needPlot = false;
         imgv_map.invalidate();
     }
@@ -665,10 +692,12 @@ public class IndoorLocalization extends Activity {
         else return false;
     }
 
+    /*
     private boolean isPDRDurationExpired() {
         if (PDR_DURATION == 0 || (n_step % PDR_DURATION == 0 && !isSelected)) {
             isSelected = true;
             return true;
         } else return false;
     }
+    */
 }
