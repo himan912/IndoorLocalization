@@ -47,19 +47,25 @@ public class IndoorLocalization extends Activity {
 
     /*---------- Fixed Parameters ----------*/
     private static final byte[] PACKET_HEADER = new BigInteger("7e4500ffff0000080089", 16).toByteArray();
-    private static final Location[] ANCHORS = {
-            new Location(0, 0),
-            new Location(0, 0),
-            new Location(3, 0),
-            new Location(3, 3),
-            new Location(0, 3)
+
+    private static final int P0 = -43;
+    private static final float MU = (float) 2.5;
+    // Path Loss Model
+    private static final Anchor[] ANCHORS = {
+            new Anchor(0, 0, P0, MU),
+
+            new Anchor(0, 0, P0, MU),
+            new Anchor(3, 0, P0, MU),
+            new Anchor(3, 3, P0, MU),
+            new Anchor(0, 3, P0, MU),
+
+            new Anchor(5, 2.5, P0, MU),
+            new Anchor(4.5, 5, P0, MU),
     };
 
-    private boolean isCalibrated = false;
-
-    private static final int N_GRID = 10;
-
-    private float anchor_dist_x = 1, anchor_dist_y = 1;
+    private static final int PDR_DURATION = 5;
+    private static final float NLOS_DETECTION_THRESHOLD = (float) 1.1;
+    // PDR Parameters
 
     private static final int SIZE_MARKER = 5;
 
@@ -74,13 +80,6 @@ public class IndoorLocalization extends Activity {
     private static final float THETA_ABS_DEG = 5;
     private static final float THETA_ABS_RAD = (float) (THETA_ABS_DEG * (Math.PI / 180));
     // The angle between Mag North and x-axis (CCW)
-    private static final int PDR_DURATION = 6;
-    private static final float NLOS_DETECTION_THRESHOLD = (float) 1.1;
-    // PDR Parameters
-
-    private static final int P0 = -43;
-    private static final float MU = (float) 2.5;
-    // Path Loss Model
 
     private static final float W_PREV = 2, W_MAG = 1, W_GYRO = 2;
     private static final float TH_COR = (float) (5 * Math.PI / 180);
@@ -102,10 +101,7 @@ public class IndoorLocalization extends Activity {
     private PhotoViewAttacher mAttacher;
     // Map Display
 
-    private boolean isSelected = false;
-
-    private HashMap<Integer, Location> anchors;
-    //private HashMap<Integer, Integer> rss_table;
+    private HashMap<Integer, Anchor> anchors;
 
     // PDR
     // 멤버 선언
@@ -113,7 +109,10 @@ public class IndoorLocalization extends Activity {
     private SensorEventListener mSensorEventListener;
     private Sensor mSensorLinAcc, mSensorGyro, mSensorRot; // IMU
 
-    private boolean isRun = false, isNewStep = true;
+    private boolean isSelected = false;
+    private boolean isCalibrated = false;
+    private boolean isRun = false;
+    private boolean isNewStep = true;
 
     private long t_begin;
     private float t_current_s, dt;
@@ -129,9 +128,9 @@ public class IndoorLocalization extends Activity {
     private Location LSLocation = new Location(0, 0);
     private Location currentLocation = new Location(0, 0);
     private Location previousLocation = new Location(0, 0);
+    private float anchor_dist_x = 1, anchor_dist_y = 1;
 
     private float max_d = 0;
-
     private int n_step = -1;                // 걸음수
 
     private float angle_prev = 0, angle_mag = 0, angle_mag_prev = 0, angle_gyro = 0, angle_cur = 0;
@@ -217,9 +216,10 @@ public class IndoorLocalization extends Activity {
 
         if (!anchors.containsKey(source)) {
             anchors.put(source, ANCHORS[source]);
+            plotAnchors();
 
-            for (Location loc1 : anchors.values()) {
-                for (Location loc2 : anchors.values()) {
+            for (Anchor loc1 : anchors.values()) {
+                for (Anchor loc2 : anchors.values()) {
                     if (Math.abs(loc1.getX() - loc2.getX()) > anchor_dist_x) {
                         anchor_dist_x = Math.abs(loc1.getX() - loc2.getX());
                     }
@@ -228,8 +228,6 @@ public class IndoorLocalization extends Activity {
                     }
                 }
             }
-
-            //anchors.put(source, new Location(x, y));
         }
         anchors.get(source).addRSS(rss);
     }
@@ -300,7 +298,7 @@ public class IndoorLocalization extends Activity {
                     mExecutor.submit(mSerialIoManager);
 
                     btn_start.setText("Stop");
-                    Init_PDR();
+                    init();
                     run();
                 } else {
                     btn_start.setText("Start");
@@ -313,7 +311,11 @@ public class IndoorLocalization extends Activity {
                     connection.close();
                     isRun = false;
                     isCalibrated = false;
-                    plotAnchors();
+                    for(Anchor loc: anchors.values()){
+                        loc.clearRSSTable();
+                    }
+                    init();
+                    clearMap();
                 }
             }
         });
@@ -342,9 +344,9 @@ public class IndoorLocalization extends Activity {
 
                 if (!isCalibrated) {
                     plotAnchors();
-                    for (Location loc : anchors.values()) {
+                    tv_info.setText("Calibrating.." + "\n");
+                    for (Anchor loc : anchors.values()) {
                         if (!loc.isCalibrated()) {
-                            tv_info.setText("Calibrating.." + "\n");
                             return;
                         }
                     }
@@ -390,14 +392,15 @@ public class IndoorLocalization extends Activity {
         isRun = true;
     }
 
-    private void Init_PDR() {
+    private void init() {
         PDRLocation.resetLocation();
-        //PDRLocation.setLocation(2.5, 2.5);
         angle_prev = 0;
         angle_mag = 0;
         angle_gyro = 0;
         angle_cur = 0;
         angle_mag_prev = 0;
+        anchor_dist_x = 1;
+        anchor_dist_y = 1;
 
         n_step = -1;
         acc_p = -10;
@@ -406,6 +409,8 @@ public class IndoorLocalization extends Activity {
         t_step = 0;
 
         isNewStep = true; // 초기 방향측정 기준
+        needPlot = false;
+
         isStep = false;
         acc_max = 0;
         acc_min = 0;
@@ -497,7 +502,7 @@ public class IndoorLocalization extends Activity {
         tv_info.append("LS Location: " + LSLocation.getX() + "," + LSLocation.getY() + "\n");
         tv_info.append("Current Angle: " + azimuth * (180 / Math.PI) + "\n");
         for (int i : anchors.keySet()) {
-            tv_info.append("Source: " + i + ", RSS: " + anchors.get(i).getRawRSS() + "\n");
+            tv_info.append("Source: " + i + ", Raw RSS: " + anchors.get(i).getRawRSS() + ", avg RSS: " + anchors.get(i).getRSS() + "\n");
         }
         tv_info.append("max_d: " + max_d);
     }
@@ -514,15 +519,15 @@ public class IndoorLocalization extends Activity {
 
         try {
             tv_info.setText("");
+
             for (int i : anchors.keySet()) {
-                dist.put(i, (float) Math.pow(10, (P0 - anchors.get(i).getRSS()) / (10 * MU)));
-                //tv_info.append("rss: " + anchors.get(i).getRSS() +"d: " + dist.get(i) + "\n");
+                dist.put(i, (float) Math.pow(10, (anchors.get(i).getP0() - anchors.get(i).getRSS()) / (10 * anchors.get(i).getMU())));
             }
 
             double[][] mat_X = new double[n - 2][2];
             double[][] vec_b = new double[n - 2][1];
 
-            int[][] subsets = Matrix.getSubsets(n);
+            int[][] subsets = Matrix.getSubsets(anchors.keySet());
 
             for (int i = 0; i < subsets.length; i++) {
                 for (int j = 0; j < subsets[i].length - 1; j++) {
@@ -537,8 +542,9 @@ public class IndoorLocalization extends Activity {
                 }
 
                 double[][] LSsample = matrixMultiplication(matrixMultiplication(getInverseMatrix(matrixMultiplication(transposeMatrix(mat_X), mat_X)), transposeMatrix(mat_X)), vec_b);
-                est.add(new Location(LSsample[0][0], LSsample[1][0]));
-                // 역행렬 문제로 인해 4개 Anchor밖에 지원 못함.
+                if (LSsample != null){
+                    est.add(new Location(LSsample[0][0], LSsample[1][0]));
+                }
             }
         } catch (Exception e) {
             tv_info.setText(e.toString());
@@ -631,9 +637,13 @@ public class IndoorLocalization extends Activity {
         imgv_map.invalidate();
     }
 
-    private void plotAnchors() {
+    private void clearMap(){
         canvas_map.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
-        for (Location loc : anchors.values()) {
+        plotAnchors();
+    }
+
+    private void plotAnchors() {
+        for (Anchor loc : anchors.values()) {
             plotRect(loc, BLACK);
         }
         imgv_map.invalidate();
@@ -656,7 +666,7 @@ public class IndoorLocalization extends Activity {
     }
 
     private boolean isPDRDurationExpired() {
-        if (n_step % PDR_DURATION == 0 && !isSelected) {
+        if (PDR_DURATION == 0 || (n_step % PDR_DURATION == 0 && !isSelected)) {
             isSelected = true;
             return true;
         } else return false;

@@ -7,12 +7,14 @@ import org.apache.commons.math3.linear.LUDecomposition;
 import org.apache.commons.math3.linear.RealMatrix;
 import org.apache.commons.math3.linear.RealVector;
 
+import java.util.Set;
+
 /**
  * Created by Hyunmin Cho on 2015-10-21.
  */
 public class Matrix {
     public static double[][] transposeMatrix(double[][] matrix) {
-        double[][] ret_matrix = new double[matrix.length][matrix[0].length];
+        double[][] ret_matrix = new double[matrix[0].length][matrix.length];
 
         for (int i = 0; i < matrix.length; i++) {
             for (int j = 0; j < matrix[i].length; j++) {
@@ -68,18 +70,21 @@ public class Matrix {
         return ret_matrix;
     }
 
-    public static int[][] getSubsets(int n) {
-        int[][] subsets = new int[n][n - 1];
+    public static int[][] getSubsets(Set<Integer> s) {
+        Object[] nums = s.toArray();
+        int n = s.size();
+        int[][] subsets = new int[n][n-1];
 
-        subsets[0][n - 2] = n - 1;
-        subsets[n - 1][0] = 2;
+        subsets[0][n-2] = (int) nums[nums.length-2];
+        subsets[n-1][0] = (int) nums[1];
 
-        for (int i = 1; i <= n - 1; i++) {
-            for (int j = 1; j <= n - i; j++) {
-                subsets[j - 1][i - 1] = i;
-                subsets[n - j][n - 1 - i] = n - (i - 1);
+        for (int i=0; i < n-1; i++) {
+            for (int j=0; j < n-1-i; j++) {
+                subsets[j][i] = (int) nums[i];
+                subsets[n-1-j][n-2-i] = (int) nums[n-i-1];
             }
         }
+
         return subsets;
     }
 }
