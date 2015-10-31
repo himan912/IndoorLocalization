@@ -40,19 +40,13 @@ import java.util.concurrent.Executors;
 import uk.co.senab.photoview.PhotoViewAttacher;
 
 public class IndoorLocalization extends Activity {
-    private boolean isLOS = false;
-
-    /*---------- Fixed Parameters ----------*/
     private static final byte[] PACKET_HEADER = new BigInteger("7e4500ffff0000080089", 16).toByteArray();
 
     private static final int P0 = -38;
     private static final float MU = (float) 2.5;
-    private static final float NLOS_DETECTION_THRESHOLD = (float) 1.2;
-    private static final int MAX_ITERATION_DEPTH = 1;
 
-    // Path Loss Model
     private static final Anchor2D[] ANCHOR_2Ds = {
-            new Anchor2D(0, 0, P0, MU),
+            new Anchor2D(1.5, 1.5, P0, MU),
 
             new Anchor2D(0, 0, P0, MU),
             new Anchor2D(3, 0, P0, MU),
@@ -63,8 +57,10 @@ public class IndoorLocalization extends Activity {
             new Anchor2D(0, 3, P0, MU),
     };
 
-    private static final int SIZE_MARKER = 5;
+    private static final float NLOS_DETECTION_THRESHOLD = (float) 1.4;
+    private static final int MAX_ITERATION_DEPTH = 0;
 
+    private static final int SIZE_MARKER = 5;
     private static final int SENSOR_INIT_TIME = 100;
     // Sensor Warm-up time in ms
     private static final float MIN_MAX_INTERVAL = (float) 0.1;
@@ -90,11 +86,12 @@ public class IndoorLocalization extends Activity {
     private Button btn_start;
     // UI Views
 
-    private int screen_width;
     private ImageView imgv_map;
     private Bitmap bitmap_map;
     private Canvas canvas_map;
     private PhotoViewAttacher mAttacher;
+    private int screenWidth_pixel;
+    private float mapWidth_x, mapWidth_y, mapWidth;
     // Map Display
 
     private HashMap<Integer, Anchor2D> anchors;
@@ -115,7 +112,6 @@ public class IndoorLocalization extends Activity {
             }
 
             if (!isCalibrated) {
-                plotAnchors();
                 tv_info.setText("RSS Calibrating.." + "\n");
                 for (Anchor2D loc : anchors.values()) {
                     if (!loc.isCalibrated()) {
@@ -144,9 +140,9 @@ public class IndoorLocalization extends Activity {
     };
     private Sensor mSensorLinAcc, mSensorGyro, mSensorRot; // IMU
 
-    private boolean isSelected = false;
-    private boolean isCalibrated = false;
+    private boolean isCalibrated;
     private boolean isRun = false;
+    private boolean isLOS = false;
 
     private long t_begin;
     private float t_current_s, dt;
@@ -155,33 +151,32 @@ public class IndoorLocalization extends Activity {
     private float[] data_acc = null;
     private float acc_norm;
     private float[] data_gyro = null;
-    private float[] rot_vector;
+    private float[] rot_vector = null;
 
     // 데이터 변수 선언
-    private Location2D PDRLocation2D = new Location2D(0, 0);
-    private Location2D LSLocation2D = new Location2D(0, 0);
-    private Location2D currentLocation2D = new Location2D(0, 0);
-    private Location2D previousLocation2D = new Location2D(0, 0);
-    private float anchor_dist_x = 1, anchor_dist_y = 1;
+    private Location2D PDRLocation2D = new Location2D(0,0);
+    private Location2D LSLocation2D = new Location2D(0,0);
+    private Location2D currentLocation2D = new Location2D(0,0);
+    private Location2D previousLocation2D = new Location2D(0,0);
 
-    private float scattering_distance = 0;
-    private int n_step = -1;                // 걸음수
+    private float scattering_distance;
+    private int n_step;
 
-    private float angle_prev = 0, angle_mag = 0, angle_mag_prev = 0, angle_gyro = 0, angle_cur = 0;
+    private float angle_prev, angle_mag, angle_mag_prev, angle_gyro, angle_cur;
     private float delta_cor, delta_mag;
 
-    private float acc_p = -10;            // 이전 가속도
-    private float t_max_peak = 0;    // 이전 걸음 시간
-    private float t_step = 0;
+    private float acc_p;            // 이전 가속도
+    private float t_max_peak;    // 이전 걸음 시간
+    private float t_step;
 
-    private boolean isStep = false;
+    private boolean isStep;
 
     private float azimuth; // 방위각
     private float pitch;    // 피치
     private float roll;  // 롤
 
-    private float acc_max, acc_min = 0;
-    private float steplength = 0;
+    private float acc_max, acc_min;
+    private float steplength;
 
     private final ExecutorService mExecutor = Executors.newSingleThreadExecutor();
     private List<UsbSerialPort> mEntries = new ArrayList<>();
@@ -192,10 +187,6 @@ public class IndoorLocalization extends Activity {
 
     private final SerialInputOutputManager.Listener mListener = new SerialInputOutputManager.Listener() {
         @Override
-        public void onRunError(Exception e) {
-        }
-
-        @Override
         public void onNewData(final byte[] data) {
             IndoorLocalization.this.runOnUiThread(new Runnable() {
                 @Override
@@ -205,6 +196,11 @@ public class IndoorLocalization extends Activity {
             });
             // 시리얼 데이터 수신은 별도 쓰레드에서 함.
             // UI 쓰레드로 데이터를 보내 view 처리
+        }
+
+        @Override
+        public void onRunError(Exception e) {
+
         }
     };
 
@@ -249,17 +245,22 @@ public class IndoorLocalization extends Activity {
 
         if (!anchors.containsKey(source)) {
             anchors.put(source, ANCHOR_2Ds[source]);
-            plotAnchors();
+            clearMap();
 
             for (Anchor2D loc1 : anchors.values()) {
                 for (Anchor2D loc2 : anchors.values()) {
-                    if (Math.abs(loc1.getX() - loc2.getX()) > anchor_dist_x) {
-                        anchor_dist_x = Math.abs(loc1.getX() - loc2.getX());
+                    if (Math.abs(loc1.getX() - loc2.getX()) > mapWidth_x) {
+                        mapWidth_x = Math.abs(loc1.getX() - loc2.getX());
                     }
-                    if (Math.abs(loc1.getY() - loc2.getY()) > anchor_dist_y) {
-                        anchor_dist_y = Math.abs(loc1.getY() - loc2.getY());
+                    if (Math.abs(loc1.getY() - loc2.getY()) > mapWidth_y) {
+                        mapWidth_y = Math.abs(loc1.getY() - loc2.getY());
                     }
                 }
+            }
+            if(mapWidth_x >= mapWidth_y){
+                mapWidth = mapWidth_x;
+            }else{
+                mapWidth = mapWidth_y;
             }
         }
         anchors.get(source).addRSS(rss);
@@ -281,10 +282,10 @@ public class IndoorLocalization extends Activity {
 
         DisplayMetrics displaymetrics = new DisplayMetrics();
         getWindowManager().getDefaultDisplay().getMetrics(displaymetrics);
-        screen_width = displaymetrics.widthPixels;
+        screenWidth_pixel = displaymetrics.widthPixels;
 
         imgv_map = (ImageView) findViewById(R.id.map);
-        bitmap_map = Bitmap.createBitmap(screen_width, screen_width, Bitmap.Config.ARGB_8888);
+        bitmap_map = Bitmap.createBitmap(screenWidth_pixel, screenWidth_pixel, Bitmap.Config.ARGB_8888);
         //bitmap_map = BitmapFactory.decodeResource(this.getApplicationContext().getResources(), R.drawable.map).copy(Bitmap.Config.ARGB_8888, true);
         canvas_map = new Canvas(bitmap_map);
         imgv_map.setImageBitmap(bitmap_map);
@@ -377,6 +378,9 @@ public class IndoorLocalization extends Activity {
 
     private void init() {
         PDRLocation2D.resetLocation();
+        mapWidth_x = 1;
+        mapWidth_y = 1;
+
         angle_prev = 0;
         angle_mag = 0;
         angle_gyro = 0;
@@ -389,6 +393,7 @@ public class IndoorLocalization extends Activity {
         t_max_peak = 0;
         t_step = 0;
 
+        isCalibrated = false;
         isStep = false;
         acc_max = 0;
         acc_min = 0;
@@ -609,9 +614,9 @@ public class IndoorLocalization extends Activity {
 
     private void plotCurrentLocation() {
         clearMap();
+        int current_x_converted = (int) (Math.round((currentLocation2D.getX() + ((1.5 * mapWidth) - mapWidth_x) / 2) * (screenWidth_pixel / (mapWidth * 1.5))));
+        int current_y_converted = (int) (screenWidth_pixel - Math.round(((currentLocation2D.getY() + ((1.5 * mapWidth) - mapWidth_y) / 2) * (screenWidth_pixel / (mapWidth * 1.5)))));
 
-        int current_x_converted = Math.round(currentLocation2D.getX() * ((screen_width / 2) / anchor_dist_x)) + (screen_width / 4);
-        int current_y_converted = screen_width - Math.round(currentLocation2D.getY() * ((screen_width / 2) / anchor_dist_y)) - (screen_width / 4);
         canvas_map.drawCircle(current_x_converted, current_y_converted, SIZE_MARKER, RED);
         imgv_map.invalidate();
     }
@@ -629,12 +634,11 @@ public class IndoorLocalization extends Activity {
     }
 
     private void plotRect(Location2D loc, Paint paint) {
-        int x_converted = Math.round(loc.getX() * ((screen_width / 2) / anchor_dist_x));
-        int y_converted = screen_width - Math.round(loc.getY() * ((screen_width / 2) / anchor_dist_y));
-
+        int x_converted = (int) (Math.round((loc.getX() + ((1.5 * mapWidth) - mapWidth_x) / 2) * (screenWidth_pixel / (mapWidth * 1.5))));
+        int y_converted = (int) (screenWidth_pixel - Math.round(((loc.getY() + ((1.5 * mapWidth) - mapWidth_y) / 2) * (screenWidth_pixel / (mapWidth * 1.5)))));
         canvas_map.drawRect(
-                ((screen_width / 4) + x_converted - SIZE_MARKER), (y_converted - (screen_width / 4) - SIZE_MARKER),
-                ((screen_width / 4) + x_converted + SIZE_MARKER), (y_converted - (screen_width / 4) + SIZE_MARKER), paint);
+                (x_converted - SIZE_MARKER), (y_converted - SIZE_MARKER),
+                (x_converted + SIZE_MARKER), (y_converted + SIZE_MARKER), paint);
 
         imgv_map.invalidate();
     }
