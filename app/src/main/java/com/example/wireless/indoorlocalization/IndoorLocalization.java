@@ -58,7 +58,7 @@ public class IndoorLocalization extends Activity {
     };
 
     private static final float NLOS_DETECTION_THRESHOLD = (float) 1.4;
-    private static final int MAX_ITERATION_DEPTH = 0;
+    private static final int MAX_ITERATION_DEPTH = 1;
 
     private static final int SIZE_MARKER = 5;
     private static final int SENSOR_INIT_TIME = 100;
@@ -218,6 +218,11 @@ public class IndoorLocalization extends Activity {
         try {
             if (Arrays.equals(header, PACKET_HEADER)) {
                 getInfo(data);
+                try{
+                    isLOS = updateLSLocation();
+                }catch(Exception e){
+                    tv_info.setText("{LSEstimation}\n" + e.toString());
+                }
             }
         } catch (Exception e) {
             return false;
@@ -427,7 +432,6 @@ public class IndoorLocalization extends Activity {
 
     private void updateLocation() {
         try {
-            isLOS = updateLSLocation();
             if (data_acc != null && data_gyro != null) {
                 updatePDRLocation();
             }
@@ -456,7 +460,7 @@ public class IndoorLocalization extends Activity {
                 previousLocation2D.setLocation(currentLocation2D);
             }
         }catch (Exception e){
-            tv_info.setText("[UpdateLocation()]" + e.toString());
+            tv_info.setText("[UpdateLocation()]\n" + e.toString());
         }
     }
 
