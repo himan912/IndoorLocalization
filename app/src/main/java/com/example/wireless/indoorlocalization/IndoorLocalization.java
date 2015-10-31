@@ -39,10 +39,6 @@ import java.util.concurrent.Executors;
 
 import uk.co.senab.photoview.PhotoViewAttacher;
 
-import static com.example.wireless.indoorlocalization.Matrix.getInverseMatrix;
-import static com.example.wireless.indoorlocalization.Matrix.matrixMultiplication;
-import static com.example.wireless.indoorlocalization.Matrix.transposeMatrix;
-
 public class IndoorLocalization extends Activity {
     private boolean isLOS = false;
 
@@ -51,10 +47,11 @@ public class IndoorLocalization extends Activity {
 
     private static final int P0 = -38;
     private static final float MU = (float) 2.5;
-    private static final float NLOS_DETECTION_THRESHOLD = (float) 1.4;
+    private static final float NLOS_DETECTION_THRESHOLD = (float) 1.2;
+    private static final int MAX_ITERATION_DEPTH = 1;
 
     // Path Loss Model
-    private static final Anchor2D[] ANCHOR_2_Ds = {
+    private static final Anchor2D[] ANCHOR_2Ds = {
             new Anchor2D(0, 0, P0, MU),
 
             new Anchor2D(0, 0, P0, MU),
@@ -86,7 +83,7 @@ public class IndoorLocalization extends Activity {
     // Heading Estimation Parameters
 
     private static final float STEP_CONSTANT = (float) 0.43;
-    private static Paint RED = new Paint(), BLUE = new Paint(), BLACK = new Paint(), LINE = new Paint();
+    private static Paint RED = new Paint(), BLUE = new Paint(), BLACK = new Paint();
 
     /*---------- Member Variables ----------*/
     private TextView tv_info;
@@ -105,13 +102,51 @@ public class IndoorLocalization extends Activity {
     // PDR
     // 멤버 선언
     private SensorManager mSensorManager;
-    private SensorEventListener mSensorEventListener;
+    private SensorEventListener mSensorEventListener = new SensorEventListener() {
+        @Override
+        public void onAccuracyChanged(Sensor sensor, int accuracy) {
+        }
+
+        @Override
+        public void onSensorChanged(SensorEvent event) {
+            if (anchors.size() < 4) {
+                tv_info.setText("Not enough Anchor nodes.. (" + anchors.size() + ")\n");
+                return;
+            }
+
+            if (!isCalibrated) {
+                plotAnchors();
+                tv_info.setText("RSS Calibrating.." + "\n");
+                for (Anchor2D loc : anchors.values()) {
+                    if (!loc.isCalibrated()) {
+                        return;
+                    }
+                }
+                isCalibrated = true;
+            }
+
+            switch (event.sensor.getType()) {
+                case Sensor.TYPE_ROTATION_VECTOR:
+                    if (System.currentTimeMillis() - t_begin > SENSOR_INIT_TIME) {
+                        rot_vector = event.values.clone();
+                        getOrientation();
+                    }
+                    break;
+                case Sensor.TYPE_LINEAR_ACCELERATION:
+                    data_acc = event.values.clone();
+                    updateLocation();
+                    break;
+                case Sensor.TYPE_GYROSCOPE:
+                    data_gyro = event.values.clone();
+                    break;
+            }
+        }
+    };
     private Sensor mSensorLinAcc, mSensorGyro, mSensorRot; // IMU
 
     private boolean isSelected = false;
     private boolean isCalibrated = false;
     private boolean isRun = false;
-    private boolean isNewStep = true;
 
     private long t_begin;
     private float t_current_s, dt;
@@ -140,7 +175,6 @@ public class IndoorLocalization extends Activity {
     private float t_step = 0;
 
     private boolean isStep = false;
-    private boolean needPlot = false;
 
     private float azimuth; // 방위각
     private float pitch;    // 피치
@@ -214,7 +248,7 @@ public class IndoorLocalization extends Activity {
         final int y = (int) info[3];
 
         if (!anchors.containsKey(source)) {
-            anchors.put(source, ANCHOR_2_Ds[source]);
+            anchors.put(source, ANCHOR_2Ds[source]);
             plotAnchors();
 
             for (Anchor2D loc1 : anchors.values()) {
@@ -245,11 +279,6 @@ public class IndoorLocalization extends Activity {
         BLUE.setColor(Color.BLUE);
         BLACK.setColor(Color.BLACK);
 
-        LINE.setColor(Color.BLUE);
-        LINE.setAlpha(100);
-        LINE.setStyle(Paint.Style.STROKE);
-        LINE.setStrokeWidth(2);
-
         DisplayMetrics displaymetrics = new DisplayMetrics();
         getWindowManager().getDefaultDisplay().getMetrics(displaymetrics);
         screen_width = displaymetrics.widthPixels;
@@ -263,132 +292,87 @@ public class IndoorLocalization extends Activity {
         // 맵 이미지를 카피한 bitmap을 canvas에 올림. canvas에서는 좌표를 찍으면서 bitmap 변경.
         // imageview는 이 bitmap과 연결. canvas에서 좌표를 찍으면 invalidate로 bitmap 업데이트.
 
-        btn_start = (Button) findViewById(R.id.btn_start);
-        btn_start.setOnClickListener(new View.OnClickListener() {
-            public void onClick(View v) {
-                if (!isRun) {
-                    mUsbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
-                    final List<UsbSerialDriver> drivers = UsbSerialProber.getDefaultProber().findAllDrivers(mUsbManager);
-                    // getting all the connected drivers
-
-                    if (drivers == null || drivers.size() == 0) {
-                        tv_info.setText("No devices attached");
-                        return;
-                    }
-
-                    mEntries.clear();
-                    for (final UsbSerialDriver driver : drivers) {
-                        final List<UsbSerialPort> ports = driver.getPorts();
-                        mEntries.addAll(ports);
-                    }
-                    mPort = mEntries.get(0);
-
-                    connection = mUsbManager.openDevice(mPort.getDriver().getDevice());
-                    try {
-                        mPort.open(connection);
-                        mPort.setParameters(115200, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE);
-                    } catch (IOException e) {
-                        tv_info.setText("Connection Failed");
-                        e.printStackTrace();
-                    }
-                    tv_info.setText("Device " + mPort.getDriver().getDevice().getDeviceName() + " Connected");
-
-                    mSerialIoManager = new SerialInputOutputManager(mPort, mListener);
-                    mExecutor.submit(mSerialIoManager);
-
-                    btn_start.setText("Stop");
-                    init();
-                    run();
-                } else {
-                    btn_start.setText("Start");
-                    mSensorManager.unregisterListener(mSensorEventListener);
-                    try {
-                        mPort.close();
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-                    connection.close();
-                    isRun = false;
-                    isCalibrated = false;
-                    for(Anchor2D loc: anchors.values()){
-                        loc.clearRSSTable();
-                    }
-                    init();
-                    clearMap();
-                }
-            }
-        });
-    }
-
-    protected void onResume() {
-        super.onResume();
-        //////////////////////
-        // 센서 초기화
         mSensorManager = (SensorManager) getSystemService(SENSOR_SERVICE);
         mSensorLinAcc = mSensorManager.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION);
         mSensorGyro = mSensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
         mSensorRot = mSensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
 
-        mSensorEventListener = new SensorEventListener() {
-            @Override
-            public void onAccuracyChanged(Sensor sensor, int accuracy) {
-            }
-
-            @Override
-            public void onSensorChanged(SensorEvent event) {
-                if (anchors.size() < 4) {
-                    tv_info.setText("Not enough Anchor nodes.. (" + anchors.size() + ")\n");
-                    return;
-                }
-
-                if (!isCalibrated) {
-                    plotAnchors();
-                    tv_info.setText("RSS Calibrating.." + "\n");
-                    for (Anchor2D loc : anchors.values()) {
-                        if (!loc.isCalibrated()) {
-                            return;
-                        }
+        btn_start = (Button) findViewById(R.id.btn_start);
+        btn_start.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                if (!isRun) {
+                    btn_start.setText("Stop");
+                    init();
+                    resume();
+                } else {
+                    btn_start.setText("Start");
+                    isCalibrated = false;
+                    for(Anchor2D loc: anchors.values()){
+                        loc.clearRSSTable();
                     }
-                    isCalibrated = true;
-                }
-
-                switch (event.sensor.getType()) {
-                    case Sensor.TYPE_ROTATION_VECTOR:
-                        if (System.currentTimeMillis() - t_begin > SENSOR_INIT_TIME) {
-                            rot_vector = event.values.clone();
-                            getOrientation();
-                        }
-                        break;
-                    case Sensor.TYPE_LINEAR_ACCELERATION:
-                        if (!isNewStep) {
-                            data_acc = event.values.clone();
-                            updateLocation();
-                        }
-                        break;
-                    case Sensor.TYPE_GYROSCOPE:
-                        if (!isNewStep) {
-                            data_gyro = event.values.clone();
-                        }
-                        break;
+                    clearMap();
+                    pause();
                 }
             }
-        };
+        });
     }
 
-    @Override
-    protected void onPause() {
-        super.onPause();
+    private void pause(){
         mSensorManager.unregisterListener(mSensorEventListener);
         isRun = false;
+
+        try {
+            mPort.close();
+            connection.close();
+            mSerialIoManager.stop();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 
-    private void run() {
-        mSensorManager.registerListener(mSensorEventListener, mSensorLinAcc, SensorManager.SENSOR_DELAY_GAME);
-        mSensorManager.registerListener(mSensorEventListener, mSensorGyro, SensorManager.SENSOR_DELAY_GAME);
-        mSensorManager.registerListener(mSensorEventListener, mSensorRot, SensorManager.SENSOR_DELAY_GAME);
-        // 20000us (20ms) sampling time.
-        // http://developer.android.com/guide/topics/sensors/sensors_overview.html
-        isRun = true;
+    private void resume(){
+        try {
+            // 1. Connect to the device
+            mUsbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
+            final List<UsbSerialDriver> drivers = UsbSerialProber.getDefaultProber().findAllDrivers(mUsbManager);
+            // getting all the connected drivers
+
+            if (drivers == null || drivers.size() == 0) {
+                tv_info.setText("No devices attached");
+                return;
+            }
+
+            mEntries.clear();
+            for (final UsbSerialDriver driver : drivers) {
+                final List<UsbSerialPort> ports = driver.getPorts();
+                mEntries.addAll(ports);
+            }
+            mPort = mEntries.get(0);
+
+            connection = mUsbManager.openDevice(mPort.getDriver().getDevice());
+            try {
+                mPort.open(connection);
+                mPort.setParameters(115200, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE);
+            } catch (IOException e) {
+                tv_info.setText("Connection Failed");
+                e.printStackTrace();
+            }
+            tv_info.setText("Device " + mPort.getDriver().getDevice().getDeviceName() + " Connected");
+
+            mSerialIoManager = new SerialInputOutputManager(mPort, mListener);
+            mExecutor.submit(mSerialIoManager);
+
+            // 2. Register Sensors
+            mSensorManager.registerListener(mSensorEventListener, mSensorGyro, SensorManager.SENSOR_DELAY_GAME);
+            mSensorManager.registerListener(mSensorEventListener, mSensorLinAcc, SensorManager.SENSOR_DELAY_GAME);
+            mSensorManager.registerListener(mSensorEventListener, mSensorRot, SensorManager.SENSOR_DELAY_GAME);
+            // 20000us (20ms) sampling time.
+            // http://developer.android.com/guide/topics/sensors/sensors_overview.html
+            isRun = true;
+            init();
+        }catch(Exception e){
+            tv_info.setText(e.toString());
+        }
     }
 
     private void init() {
@@ -404,9 +388,6 @@ public class IndoorLocalization extends Activity {
         t_prior_s = 0;
         t_max_peak = 0;
         t_step = 0;
-
-        isNewStep = true; // 초기 방향측정 기준
-        needPlot = false;
 
         isStep = false;
         acc_max = 0;
@@ -430,16 +411,13 @@ public class IndoorLocalization extends Activity {
         // in radian
         // target orientation angle in PDR coordinate system.
 
-        if (isNewStep == true) {
-            t_prior_s = (System.currentTimeMillis() - t_begin) / 1000;
-            angle_cur = (azimuth + THETA_ABS_RAD);
-            angle_prev = angle_cur;
-            angle_mag = (azimuth + THETA_ABS_RAD);
-            angle_mag_prev = angle_mag;
+        t_prior_s = (System.currentTimeMillis() - t_begin) / 1000;
+        angle_cur = (azimuth + THETA_ABS_RAD);
+        angle_prev = angle_cur;
+        angle_mag = (azimuth + THETA_ABS_RAD);
+        angle_mag_prev = angle_mag;
 
-            // target orientation in absolute coordinate system
-            isNewStep = false;
-        }
+        // target orientation in absolute coordinate system
     }
 
     private void updateLocation() {
@@ -454,31 +432,26 @@ public class IndoorLocalization extends Activity {
                     PDRLocation2D.setLocation(LSLocation2D);
                     currentLocation2D.setLocation(LSLocation2D);
 
-                    if (needPlot) {
-                        plotCurrentLocation();
-                        previousLocation2D.setLocation(currentLocation2D);
-                        n_step++;
-                    }
+                    plotCurrentLocation();
+                    previousLocation2D.setLocation(currentLocation2D);
+                    n_step++;
                 }
                 else{
                     tv_info.setText("Locating Initial Location...");
                 }
-            }
-
-            if (!isFirstStep() && needPlot) {
-                //scattering_distance = updateLSLocation();
-                if (isLOS) {
+            }else{
+                if(isLOS){
                     PDRLocation2D.setLocation(LSLocation2D);
                     currentLocation2D.setLocation(LSLocation2D);
-                } else {
+                }else{
                     currentLocation2D.setLocation(PDRLocation2D);
                 }
 
                 plotCurrentLocation();
                 previousLocation2D.setLocation(currentLocation2D);
-             }
+            }
         }catch (Exception e){
-            tv_info.setText(e.toString());
+            tv_info.setText("[UpdateLocation()]" + e.toString());
         }
     }
 
@@ -530,7 +503,6 @@ public class IndoorLocalization extends Activity {
             steplength = STEP_CONSTANT * steplength;
 
             PDRLocation2D.setLocation(PDRLocation2D.getX() + (float) (steplength * Math.cos(angle_cur)), PDRLocation2D.getY() + (float) (steplength * Math.sin(angle_cur)));
-            needPlot = true;
             // Update PDR Location
         }
         acc_p = acc_norm;
@@ -544,7 +516,6 @@ public class IndoorLocalization extends Activity {
     }
 
     private boolean updateLSLocation() {
-        //int[][] subsets = Matrix.getSubsets(anchors.keySet());
         int n = anchors.size();
         if (n < 4) return false; // not enough anchor nodes;
 
@@ -553,74 +524,19 @@ public class IndoorLocalization extends Activity {
             dist.put(i, (float) Math.pow(10, (anchors.get(i).getP0() - anchors.get(i).getRSS()) / (10 * anchors.get(i).getMU())));
         }
 
-        if(n>=4){
-            if(LSEstimation(LSLocation2D, anchors, dist)){
-                isLOS = true;
-                return true;
-            }else{
-                isLOS = false;
-            }
+        if(LSEstimation(LSLocation2D, anchors, dist, 0)){
+            isLOS = true;
+            return true;
+        }else{
+            isLOS = false;
         }
-
-        /*
-
-        ArrayList<Location2D> est = new ArrayList<Location2D>();
-        try {
-            double[][] mat_X = new double[n - 2][2];
-            double[][] vec_b = new double[n - 2][1];
-
-            int[][] subsets = Matrix.getSubsets(anchors.keySet());
-
-            for (int i = 0; i < subsets.length; i++) {
-                for (int j = 0; j < subsets[i].length - 1; j++) {
-                    mat_X[j][0] =
-                            2 * (anchors.get(subsets[i][n - 2]).getX() - anchors.get(subsets[i][j]).getX());
-                    mat_X[j][1] =
-                            2 * (anchors.get(subsets[i][n - 2]).getY() - anchors.get(subsets[i][j]).getY());
-                    vec_b[j][0] =
-                            (Math.pow(dist.get(subsets[i][j]), 2) - Math.pow(dist.get(subsets[i][n - 2]), 2))
-                                    - (Math.pow(anchors.get(subsets[i][j]).getX(), 2) - Math.pow(anchors.get(subsets[i][n - 2]).getX(), 2))
-                                    - (Math.pow(anchors.get(subsets[i][j]).getY(), 2) - Math.pow(anchors.get(subsets[i][n - 2]).getY(), 2));
-                }
-
-                double[][] LSsample = getLSSample(mat_X, vec_b);
-                if (LSsample != null){
-                    est.add(new Location2D(LSsample[0][0], LSsample[1][0]));
-                }
-            }
-        } catch (Exception e) {
-            tv_info.setText(e.toString());
-        }
-
-        float x = 0, y = 0;
-        for (Location2D loc : est) {
-            x += loc.getX();
-            y += loc.getY();
-        }
-        LSLocation2D.setLocation(x / est.size(), y / est.size());
-
-        float d, max_d = -1;
-
-        for (int i = 0; i < est.size() - 1; i++) {
-            for (int j = i + 1; j < est.size(); j++) {
-                d = (est.get(i).getX() - est.get(j).getX()) * (est.get(i).getX() - est.get(j).getX()) +
-                        (est.get(i).getY() - est.get(j).getY()) * (est.get(i).getY() - est.get(j).getY());
-                if (Math.sqrt(d) > max_d) {
-                    max_d = (float) Math.sqrt(d);
-                }
-            }
-        }
-
-        */
-        needPlot = true;
         return false;
-
-        //return max_d;
     }
 
-    public boolean LSEstimation(Location2D LSLocation2D, HashMap<Integer, Anchor2D> anchors, HashMap<Integer, Float> dist){
+    public boolean LSEstimation(Location2D LSLocation2D, HashMap<Integer, Anchor2D> anchors, HashMap<Integer, Float> dist, int depth){
         int n = anchors.size();
-        if(n<4) return false; // first iteration termination criterion
+        if(n < 4) return false; // first iteration termination criterion
+        if(depth > MAX_ITERATION_DEPTH) return false; // 메모리 부족 현상 회피를 위해 1depth 이상의 재귀는 off
 
         int[][] subsets = Matrix.getSubsets(anchors.keySet());
 
@@ -658,7 +574,8 @@ public class IndoorLocalization extends Activity {
         }
         LSLocation2D.setLocation(x / est.size(), y / est.size());
 
-        float d, scattering_distance = -1;
+        float d;
+        scattering_distance = -1;
 
         for (int i = 0; i < est.size() - 1; i++) {
             for (int j = i + 1; j < est.size(); j++) {
@@ -671,34 +588,23 @@ public class IndoorLocalization extends Activity {
         }
 
         if(scattering_distance <= NLOS_DETECTION_THRESHOLD){
-            //System.out.println("scattering_distance: " + scattering_distance);
             return true;
             // 한번 해보고 Threshold 만족하는 경우 바로 리턴.
         }
         else{
-            // 만족 못하면 next depth iteration 돌입
-            // NLOS checking Full iteration
+            // Full iteration NLOS checking
+            // Threshold 만족 못하면 next depth iteration 돌입하는 재귀
+            // Memory 부족 현상 발생할 수 있으므로 Depth 제한 필요.
             for(int i=0;i<subsets.length;i++){
                 HashMap<Integer, Anchor2D> subanchors = new HashMap<>();
                 for(int j=0;j<subsets[i].length;j++){
                     subanchors.put(subsets[i][j], anchors.get(subsets[i][j]));
                 }
-                if(LSEstimation(LSLocation2D, subanchors, dist))
+                if(LSEstimation(LSLocation2D, subanchors, dist, depth+1))
                     return true;
             }
         }
         return false;
-    }
-
-    private boolean isLOS2(float max_d) {
-        if (max_d >= 0 && max_d < NLOS_DETECTION_THRESHOLD)
-            return true;
-        else
-            return false;
-    }
-
-    private double[][] getLSSample(double[][] X, double[][] b){
-        return matrixMultiplication(matrixMultiplication(getInverseMatrix(matrixMultiplication(transposeMatrix(X), X)), transposeMatrix(X)), b);
     }
 
     private void plotCurrentLocation() {
@@ -707,8 +613,6 @@ public class IndoorLocalization extends Activity {
         int current_x_converted = Math.round(currentLocation2D.getX() * ((screen_width / 2) / anchor_dist_x)) + (screen_width / 4);
         int current_y_converted = screen_width - Math.round(currentLocation2D.getY() * ((screen_width / 2) / anchor_dist_y)) - (screen_width / 4);
         canvas_map.drawCircle(current_x_converted, current_y_converted, SIZE_MARKER, RED);
-
-        needPlot = false;
         imgv_map.invalidate();
     }
 
