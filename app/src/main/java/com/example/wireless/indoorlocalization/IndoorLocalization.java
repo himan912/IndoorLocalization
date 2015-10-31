@@ -44,6 +44,7 @@ import static com.example.wireless.indoorlocalization.Matrix.matrixMultiplicatio
 import static com.example.wireless.indoorlocalization.Matrix.transposeMatrix;
 
 public class IndoorLocalization extends Activity {
+    private boolean isLOS = false;
 
     /*---------- Fixed Parameters ----------*/
     private static final byte[] PACKET_HEADER = new BigInteger("7e4500ffff0000080089", 16).toByteArray();
@@ -53,21 +54,17 @@ public class IndoorLocalization extends Activity {
     private static final float NLOS_DETECTION_THRESHOLD = (float) 1.4;
 
     // Path Loss Model
-    private static final Anchor[] ANCHORS = {
-            new Anchor(0, 0, P0, MU),
+    private static final Anchor2D[] ANCHOR_2_Ds = {
+            new Anchor2D(0, 0, P0, MU),
 
-            new Anchor(0, 0, P0, MU),
-            new Anchor(3, 0, P0, MU),
-            new Anchor(6, 0, P0, MU),
-            new Anchor(6, 3, P0, MU),
+            new Anchor2D(0, 0, P0, MU),
+            new Anchor2D(3, 0, P0, MU),
+            new Anchor2D(6, 0, P0, MU),
+            new Anchor2D(6, 3, P0, MU),
 
-            new Anchor(3, 3, P0, MU),
-            new Anchor(0, 3, P0, MU),
+            new Anchor2D(3, 3, P0, MU),
+            new Anchor2D(0, 3, P0, MU),
     };
-
-    //private static final int PDR_DURATION = 5;
-
-    // PDR Parameters
 
     private static final int SIZE_MARKER = 5;
 
@@ -103,7 +100,7 @@ public class IndoorLocalization extends Activity {
     private PhotoViewAttacher mAttacher;
     // Map Display
 
-    private HashMap<Integer, Anchor> anchors;
+    private HashMap<Integer, Anchor2D> anchors;
 
     // PDR
     // 멤버 선언
@@ -126,13 +123,13 @@ public class IndoorLocalization extends Activity {
     private float[] rot_vector;
 
     // 데이터 변수 선언
-    private Location PDRLocation = new Location(0, 0);
-    private Location LSLocation = new Location(0, 0);
-    private Location currentLocation = new Location(0, 0);
-    private Location previousLocation = new Location(0, 0);
+    private Location2D PDRLocation2D = new Location2D(0, 0);
+    private Location2D LSLocation2D = new Location2D(0, 0);
+    private Location2D currentLocation2D = new Location2D(0, 0);
+    private Location2D previousLocation2D = new Location2D(0, 0);
     private float anchor_dist_x = 1, anchor_dist_y = 1;
 
-    private float max_d = 0;
+    private float scattering_distance = 0;
     private int n_step = -1;                // 걸음수
 
     private float angle_prev = 0, angle_mag = 0, angle_mag_prev = 0, angle_gyro = 0, angle_cur = 0;
@@ -217,11 +214,11 @@ public class IndoorLocalization extends Activity {
         final int y = (int) info[3];
 
         if (!anchors.containsKey(source)) {
-            anchors.put(source, ANCHORS[source]);
+            anchors.put(source, ANCHOR_2_Ds[source]);
             plotAnchors();
 
-            for (Anchor loc1 : anchors.values()) {
-                for (Anchor loc2 : anchors.values()) {
+            for (Anchor2D loc1 : anchors.values()) {
+                for (Anchor2D loc2 : anchors.values()) {
                     if (Math.abs(loc1.getX() - loc2.getX()) > anchor_dist_x) {
                         anchor_dist_x = Math.abs(loc1.getX() - loc2.getX());
                     }
@@ -313,7 +310,7 @@ public class IndoorLocalization extends Activity {
                     connection.close();
                     isRun = false;
                     isCalibrated = false;
-                    for(Anchor loc: anchors.values()){
+                    for(Anchor2D loc: anchors.values()){
                         loc.clearRSSTable();
                     }
                     init();
@@ -347,7 +344,7 @@ public class IndoorLocalization extends Activity {
                 if (!isCalibrated) {
                     plotAnchors();
                     tv_info.setText("RSS Calibrating.." + "\n");
-                    for (Anchor loc : anchors.values()) {
+                    for (Anchor2D loc : anchors.values()) {
                         if (!loc.isCalibrated()) {
                             return;
                         }
@@ -395,7 +392,7 @@ public class IndoorLocalization extends Activity {
     }
 
     private void init() {
-        PDRLocation.resetLocation();
+        PDRLocation2D.resetLocation();
         angle_prev = 0;
         angle_mag = 0;
         angle_gyro = 0;
@@ -447,21 +444,19 @@ public class IndoorLocalization extends Activity {
 
     private void updateLocation() {
         try {
-            max_d = updateLSLocation();
+            isLOS = updateLSLocation();
             if (data_acc != null && data_gyro != null) {
                 updatePDRLocation();
             }
 
-
-
             if (isFirstStep()) {
-                if(isLOS(max_d)){
-                    PDRLocation.setLocation(LSLocation);
-                    currentLocation.setLocation(LSLocation);
+                if(isLOS){
+                    PDRLocation2D.setLocation(LSLocation2D);
+                    currentLocation2D.setLocation(LSLocation2D);
 
                     if (needPlot) {
                         plotCurrentLocation();
-                        previousLocation.setLocation(currentLocation);
+                        previousLocation2D.setLocation(currentLocation2D);
                         n_step++;
                     }
                 }
@@ -471,16 +466,16 @@ public class IndoorLocalization extends Activity {
             }
 
             if (!isFirstStep() && needPlot) {
-                max_d = updateLSLocation();
-                if (isLOS(max_d)) {
-                    PDRLocation.setLocation(LSLocation);
-                    currentLocation.setLocation(LSLocation);
+                //scattering_distance = updateLSLocation();
+                if (isLOS) {
+                    PDRLocation2D.setLocation(LSLocation2D);
+                    currentLocation2D.setLocation(LSLocation2D);
                 } else {
-                    currentLocation.setLocation(PDRLocation);
+                    currentLocation2D.setLocation(PDRLocation2D);
                 }
 
                 plotCurrentLocation();
-                previousLocation.setLocation(currentLocation);
+                previousLocation2D.setLocation(currentLocation2D);
              }
         }catch (Exception e){
             tv_info.setText(e.toString());
@@ -534,35 +529,43 @@ public class IndoorLocalization extends Activity {
             steplength = (float) (Math.sqrt(Math.sqrt(acc_max - acc_min)));
             steplength = STEP_CONSTANT * steplength;
 
-            PDRLocation.setLocation(PDRLocation.getX() + (float) (steplength * Math.cos(angle_cur)), PDRLocation.getY() + (float) (steplength * Math.sin(angle_cur)));
+            PDRLocation2D.setLocation(PDRLocation2D.getX() + (float) (steplength * Math.cos(angle_cur)), PDRLocation2D.getY() + (float) (steplength * Math.sin(angle_cur)));
             needPlot = true;
             // Update PDR Location
         }
         acc_p = acc_norm;
 
-        tv_info.append("Current Location: " + currentLocation.getX() + "," + currentLocation.getY() + "\n");
+        tv_info.append("Current Location: " + currentLocation2D.getX() + "," + currentLocation2D.getY() + "\n");
         tv_info.append("Current Angle: " + azimuth * (180 / Math.PI) + ", Step Length: " + steplength + "\n");
         for (int i : anchors.keySet()) {
             tv_info.append("Source: " + i + ", Raw RSS: " + anchors.get(i).getRawRSS() + ", avg RSS: " + anchors.get(i).getRSS() + "\n");
         }
-        tv_info.append("max_d: " + max_d);
+        tv_info.append("Scattering Distance: " + scattering_distance);
     }
 
-    private float updateLSLocation() {
-        ArrayList<Location> est = new ArrayList<Location>();
+    private boolean updateLSLocation() {
+        //int[][] subsets = Matrix.getSubsets(anchors.keySet());
         int n = anchors.size();
-
-        if (n < 4) {
-            return -1;
-        }
+        if (n < 4) return false; // not enough anchor nodes;
 
         HashMap<Integer, Float> dist = new HashMap<>(n);
+        for (int i : anchors.keySet()) {
+            dist.put(i, (float) Math.pow(10, (anchors.get(i).getP0() - anchors.get(i).getRSS()) / (10 * anchors.get(i).getMU())));
+        }
 
-        try {
-            for (int i : anchors.keySet()) {
-                dist.put(i, (float) Math.pow(10, (anchors.get(i).getP0() - anchors.get(i).getRSS()) / (10 * anchors.get(i).getMU())));
+        if(n>=4){
+            if(LSEstimation(LSLocation2D, anchors, dist)){
+                isLOS = true;
+                return true;
+            }else{
+                isLOS = false;
             }
+        }
 
+        /*
+
+        ArrayList<Location2D> est = new ArrayList<Location2D>();
+        try {
             double[][] mat_X = new double[n - 2][2];
             double[][] vec_b = new double[n - 2][1];
 
@@ -580,9 +583,9 @@ public class IndoorLocalization extends Activity {
                                     - (Math.pow(anchors.get(subsets[i][j]).getY(), 2) - Math.pow(anchors.get(subsets[i][n - 2]).getY(), 2));
                 }
 
-                double[][] LSsample = matrixMultiplication(matrixMultiplication(getInverseMatrix(matrixMultiplication(transposeMatrix(mat_X), mat_X)), transposeMatrix(mat_X)), vec_b);
+                double[][] LSsample = getLSSample(mat_X, vec_b);
                 if (LSsample != null){
-                    est.add(new Location(LSsample[0][0], LSsample[1][0]));
+                    est.add(new Location2D(LSsample[0][0], LSsample[1][0]));
                 }
             }
         } catch (Exception e) {
@@ -590,11 +593,11 @@ public class IndoorLocalization extends Activity {
         }
 
         float x = 0, y = 0;
-        for (Location loc : est) {
+        for (Location2D loc : est) {
             x += loc.getX();
             y += loc.getY();
         }
-        LSLocation.setLocation(x / est.size(), y / est.size());
+        LSLocation2D.setLocation(x / est.size(), y / est.size());
 
         float d, max_d = -1;
 
@@ -608,22 +611,101 @@ public class IndoorLocalization extends Activity {
             }
         }
 
+        */
         needPlot = true;
-        return max_d;
+        return false;
+
+        //return max_d;
     }
 
-    private boolean isLOS(float max_d) {
+    public boolean LSEstimation(Location2D LSLocation2D, HashMap<Integer, Anchor2D> anchors, HashMap<Integer, Float> dist){
+        int n = anchors.size();
+        if(n<4) return false; // first iteration termination criterion
+
+        int[][] subsets = Matrix.getSubsets(anchors.keySet());
+
+        ArrayList<Location2D> est = new ArrayList<Location2D>();
+        try {
+            double[][] mat_X = new double[n - 2][2];
+            double[][] vec_b = new double[n - 2][1];
+
+            for (int i = 0; i < subsets.length; i++) {
+                for (int j = 0; j < subsets[i].length - 1; j++) {
+                    mat_X[j][0] =
+                            2 * (anchors.get(subsets[i][n - 2]).getX() - anchors.get(subsets[i][j]).getX());
+                    mat_X[j][1] =
+                            2 * (anchors.get(subsets[i][n - 2]).getY() - anchors.get(subsets[i][j]).getY());
+                    vec_b[j][0] =
+                            (Math.pow(dist.get(subsets[i][j]), 2) - Math.pow(dist.get(subsets[i][n - 2]), 2))
+                                    - (Math.pow(anchors.get(subsets[i][j]).getX(), 2) - Math.pow(anchors.get(subsets[i][n - 2]).getX(), 2))
+                                    - (Math.pow(anchors.get(subsets[i][j]).getY(), 2) - Math.pow(anchors.get(subsets[i][n - 2]).getY(), 2));
+                }
+
+                double[][] LSsample =
+                        Matrix.matrixMultiplication(Matrix.matrixMultiplication(Matrix.getInverseMatrix(Matrix.matrixMultiplication(Matrix.transposeMatrix(mat_X), mat_X)), Matrix.transposeMatrix(mat_X)), vec_b);
+                if (LSsample != null){
+                    est.add(new Location2D(LSsample[0][0], LSsample[1][0]));
+                }
+            }
+        } catch (org.apache.commons.math3.linear.SingularMatrixException e) {
+            return false;
+        }
+
+        float x = 0, y = 0;
+        for (Location2D loc : est) {
+            x += loc.getX();
+            y += loc.getY();
+        }
+        LSLocation2D.setLocation(x / est.size(), y / est.size());
+
+        float d, scattering_distance = -1;
+
+        for (int i = 0; i < est.size() - 1; i++) {
+            for (int j = i + 1; j < est.size(); j++) {
+                d = (est.get(i).getX() - est.get(j).getX()) * (est.get(i).getX() - est.get(j).getX()) +
+                        (est.get(i).getY() - est.get(j).getY()) * (est.get(i).getY() - est.get(j).getY());
+                if (Math.sqrt(d) > scattering_distance) {
+                    scattering_distance = (float) Math.sqrt(d);
+                }
+            }
+        }
+
+        if(scattering_distance <= NLOS_DETECTION_THRESHOLD){
+            //System.out.println("scattering_distance: " + scattering_distance);
+            return true;
+            // 한번 해보고 Threshold 만족하는 경우 바로 리턴.
+        }
+        else{
+            // 만족 못하면 next depth iteration 돌입
+            // NLOS checking Full iteration
+            for(int i=0;i<subsets.length;i++){
+                HashMap<Integer, Anchor2D> subanchors = new HashMap<>();
+                for(int j=0;j<subsets[i].length;j++){
+                    subanchors.put(subsets[i][j], anchors.get(subsets[i][j]));
+                }
+                if(LSEstimation(LSLocation2D, subanchors, dist))
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isLOS2(float max_d) {
         if (max_d >= 0 && max_d < NLOS_DETECTION_THRESHOLD)
             return true;
         else
             return false;
     }
 
+    private double[][] getLSSample(double[][] X, double[][] b){
+        return matrixMultiplication(matrixMultiplication(getInverseMatrix(matrixMultiplication(transposeMatrix(X), X)), transposeMatrix(X)), b);
+    }
+
     private void plotCurrentLocation() {
         clearMap();
 
-        int current_x_converted = Math.round(currentLocation.getX() * ((screen_width / 2) / anchor_dist_x)) + (screen_width / 4);
-        int current_y_converted = screen_width - Math.round(currentLocation.getY() * ((screen_width / 2) / anchor_dist_y)) - (screen_width / 4);
+        int current_x_converted = Math.round(currentLocation2D.getX() * ((screen_width / 2) / anchor_dist_x)) + (screen_width / 4);
+        int current_y_converted = screen_width - Math.round(currentLocation2D.getY() * ((screen_width / 2) / anchor_dist_y)) - (screen_width / 4);
         canvas_map.drawCircle(current_x_converted, current_y_converted, SIZE_MARKER, RED);
 
         needPlot = false;
@@ -636,13 +718,13 @@ public class IndoorLocalization extends Activity {
     }
 
     private void plotAnchors() {
-        for (Anchor loc : anchors.values()) {
+        for (Anchor2D loc : anchors.values()) {
             plotRect(loc, BLACK);
         }
         imgv_map.invalidate();
     }
 
-    private void plotRect(Location loc, Paint paint) {
+    private void plotRect(Location2D loc, Paint paint) {
         int x_converted = Math.round(loc.getX() * ((screen_width / 2) / anchor_dist_x));
         int y_converted = screen_width - Math.round(loc.getY() * ((screen_width / 2) / anchor_dist_y));
 

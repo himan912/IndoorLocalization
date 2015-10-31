@@ -1,19 +1,17 @@
 package com.example.wireless.indoorlocalization;
 
-import java.util.ArrayList;
-
 /**
  * Created by wireless on 2015-10-12.
  */
-public class Location {
+public class Location2D {
     protected float x, y;
 
-    public Location(float x, float y) {
+    public Location2D(float x, float y) {
         this.x = x;
         this.y = y;
     }
 
-    public Location(double x, double y) {
+    public Location2D(double x, double y) {
         this.x = (float) x;
         this.y = (float) y;
     }
@@ -23,7 +21,7 @@ public class Location {
         this.y = y;
     }
 
-    public void setLocation(Location loc) {
+    public void setLocation(Location2D loc) {
         this.x = loc.getX();
         this.y = loc.getY();
     }

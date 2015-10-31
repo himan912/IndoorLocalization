@@ -5,7 +5,7 @@ import java.util.ArrayList;
 /**
  * Created by wireless on 2015-10-30.
  */
-public class Anchor extends Location{
+public class Anchor2D extends Location2D {
     protected final int WINDOWSIZE = 5;
     protected ArrayList<Integer> rss_table = new ArrayList<>();
     protected int avg_rss = 0;
@@ -14,13 +14,13 @@ public class Anchor extends Location{
     protected float P0;
     protected float MU;
 
-    public Anchor(double x, double y, float P0, float MU){
+    public Anchor2D(double x, double y, float P0, float MU){
         super(x, y);
         this.P0 = P0;
         this.MU = MU;
     }
 
-    public Anchor(float x, float y, float P0, float MU){
+    public Anchor2D(float x, float y, float P0, float MU){
         super(x, y);
         this.P0 = P0;
         this.MU = MU;
