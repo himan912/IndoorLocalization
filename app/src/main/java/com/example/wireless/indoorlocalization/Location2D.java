@@ -4,7 +4,7 @@ package com.example.wireless.indoorlocalization;
  * Created by wireless on 2015-10-12.
  */
 public class Location2D {
-    protected float x, y;
+    private float x, y;
 
     public Location2D(float x, float y) {
         this.x = x;

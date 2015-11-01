@@ -6,13 +6,13 @@ import java.util.ArrayList;
  * Created by wireless on 2015-10-30.
  */
 public class Anchor2D extends Location2D {
-    protected final int WINDOWSIZE = 5;
-    protected ArrayList<Integer> rss_table = new ArrayList<>();
-    protected int avg_rss = 0;
-    protected int raw_rss = 0;
+    private final int WINDOWSIZE = 5;
+    private ArrayList<Integer> rss_table = new ArrayList<>();
+    private int avg_rss = 0;
+    private int raw_rss = 0;
 
-    protected float P0;
-    protected float MU;
+    private float P0;
+    private float MU;
 
     public Anchor2D(double x, double y, float P0, float MU){
         super(x, y);

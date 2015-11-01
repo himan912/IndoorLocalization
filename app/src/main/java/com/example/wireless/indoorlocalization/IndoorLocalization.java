@@ -13,6 +13,7 @@ import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.hardware.usb.UsbDeviceConnection;
 import android.hardware.usb.UsbManager;
+import android.os.AsyncTask;
 import android.os.Bundle;
 import android.util.DisplayMetrics;
 import android.view.View;
@@ -26,8 +27,11 @@ import com.hoho.android.usbserial.driver.UsbSerialPort;
 import com.hoho.android.usbserial.driver.UsbSerialProber;
 import com.hoho.android.usbserial.util.SerialInputOutputManager;
 
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.math.BigInteger;
+import java.net.Socket;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
@@ -40,6 +44,12 @@ import java.util.concurrent.Executors;
 import uk.co.senab.photoview.PhotoViewAttacher;
 
 public class IndoorLocalization extends Activity {
+    private final int port = 5555;
+    private Socket socket;
+    private DataOutputStream dos;
+    private final String serverIP = "192.168.1.103";
+    private ConnectionTask cTask = null;
+
     private static final byte[] PACKET_HEADER = new BigInteger("7e4500ffff0000080089", 16).toByteArray();
 
     private static final int P0 = -38;
@@ -57,7 +67,7 @@ public class IndoorLocalization extends Activity {
             new Anchor2D(0, 3, P0, MU),
     };
 
-    private static final float NLOS_DETECTION_THRESHOLD = (float) 1.4;
+    private static final float NLOS_DETECTION_THRESHOLD = (float) 30;
     private static final int MAX_ITERATION_DEPTH = 1;
 
     private static final int SIZE_MARKER = 5;
@@ -199,9 +209,7 @@ public class IndoorLocalization extends Activity {
         }
 
         @Override
-        public void onRunError(Exception e) {
-
-        }
+        public void onRunError(Exception e){}
     };
 
     private boolean updateReceivedData(byte[] data) {
@@ -221,7 +229,7 @@ public class IndoorLocalization extends Activity {
                 try{
                     isLOS = updateLSLocation();
                 }catch(Exception e){
-                    tv_info.setText("{LSEstimation}\n" + e.toString());
+                    //tv_info.setText("{LSEstimation}\n" + e.toString());
                 }
             }
         } catch (Exception e) {
@@ -267,6 +275,8 @@ public class IndoorLocalization extends Activity {
             }else{
                 mapWidth = mapWidth_y;
             }
+            String msg = source + "," + ANCHOR_2Ds[source].getX() + "," + ANCHOR_2Ds[source].getY();
+
         }
         anchors.get(source).addRSS(rss);
     }
@@ -308,7 +318,7 @@ public class IndoorLocalization extends Activity {
             public void onClick(View v) {
                 if (!isRun) {
                     btn_start.setText("Stop");
-                    init();
+                    //init();
                     resume();
                 } else {
                     btn_start.setText("Start");
@@ -328,6 +338,8 @@ public class IndoorLocalization extends Activity {
         isRun = false;
 
         try {
+            cTask.closeSocket();
+            cTask = null;
             mPort.close();
             connection.close();
             mSerialIoManager.stop();
@@ -375,6 +387,10 @@ public class IndoorLocalization extends Activity {
             // 20000us (20ms) sampling time.
             // http://developer.android.com/guide/topics/sensors/sensors_overview.html
             isRun = true;
+
+            // 3. Connect to Server
+            cTask = new ConnectionTask();
+            cTask.execute(serverIP);
             init();
         }catch(Exception e){
             tv_info.setText(e.toString());
@@ -460,7 +476,7 @@ public class IndoorLocalization extends Activity {
                 previousLocation2D.setLocation(currentLocation2D);
             }
         }catch (Exception e){
-            tv_info.setText("[UpdateLocation()]\n" + e.toString());
+            //tv_info.setText("[UpdateLocation()]\n" + e.toString());
         }
     }
 
@@ -618,6 +634,7 @@ public class IndoorLocalization extends Activity {
 
     private void plotCurrentLocation() {
         clearMap();
+        cTask.notify(String.format("0,%.5f,%.5f", currentLocation2D.getX(), currentLocation2D.getY()));
         int current_x_converted = (int) (Math.round((currentLocation2D.getX() + ((1.5 * mapWidth) - mapWidth_x) / 2) * (screenWidth_pixel / (mapWidth * 1.5))));
         int current_y_converted = (int) (screenWidth_pixel - Math.round(((currentLocation2D.getY() + ((1.5 * mapWidth) - mapWidth_y) / 2) * (screenWidth_pixel / (mapWidth * 1.5)))));
 
@@ -631,8 +648,9 @@ public class IndoorLocalization extends Activity {
     }
 
     private void plotAnchors() {
-        for (Anchor2D loc : anchors.values()) {
-            plotRect(loc, BLACK);
+        for(int source:anchors.keySet()){
+            plotRect(anchors.get(source), BLACK);
+            cTask.notify(String.format("%d,%.5f,%.5f", source, ANCHOR_2Ds[source].getX(), ANCHOR_2Ds[source].getY()));
         }
         imgv_map.invalidate();
     }
@@ -650,5 +668,48 @@ public class IndoorLocalization extends Activity {
     private boolean isFirstStep() {
         if (n_step == -1) return true;
         else return false;
+    }
+
+    class ConnectionTask extends AsyncTask<String, Integer, Integer> {
+        private final int CONNECTED = 1;
+        @Override
+        protected Integer doInBackground(String... params) {
+            try {
+                socket = new Socket(params[0], port);
+                dos = new DataOutputStream(socket.getOutputStream());
+                publishProgress(CONNECTED);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            return null;
+        }
+
+        protected void onProgressUpdate(Integer... values) {
+            if(values[0] == CONNECTED){
+                tv_info.setText("Connected to " + serverIP);
+            }
+        }
+
+        public void notify(String msg){
+            if(dos != null){
+                // 서버에 접속되어 있는 경우
+                try {
+                    dos.writeUTF(msg);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+
+        public void closeSocket(){
+            if(socket != null){
+                try {
+                    dos.close();
+                    socket.close();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
     }
 }
