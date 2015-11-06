@@ -27,7 +27,6 @@ import com.hoho.android.usbserial.driver.UsbSerialPort;
 import com.hoho.android.usbserial.driver.UsbSerialProber;
 import com.hoho.android.usbserial.util.SerialInputOutputManager;
 
-import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.math.BigInteger;
@@ -44,30 +43,28 @@ import java.util.concurrent.Executors;
 import uk.co.senab.photoview.PhotoViewAttacher;
 
 public class IndoorLocalization extends Activity {
-    private final int port = 5555;
-    private Socket socket;
-    private DataOutputStream dos;
-    private final String serverIP = "192.168.1.103";
-    private ConnectionTask cTask = null;
-
     private static final byte[] PACKET_HEADER = new BigInteger("7e4500ffff0000080089", 16).toByteArray();
 
-    private static final int P0 = -38;
+    //private final String SERVERIP = "192.168.1.103";
+    private final String SERVERIP = "203.252.157.35";
+    private final int PORT = 5555;
+
+    private static final int P0 = -42;
     private static final float MU = (float) 2.5;
+    private static final float TIME_STAYING = (float) 2.5;
 
     private static final Anchor2D[] ANCHOR_2Ds = {
             new Anchor2D(1.5, 1.5, P0, MU),
 
             new Anchor2D(0, 0, P0, MU),
-            new Anchor2D(3, 0, P0, MU),
-            new Anchor2D(6, 0, P0, MU),
-            new Anchor2D(6, 3, P0, MU),
-
-            new Anchor2D(3, 3, P0, MU),
-            new Anchor2D(0, 3, P0, MU),
+            new Anchor2D(2.5, 0, P0, MU),
+            new Anchor2D(5, 0, P0, MU),
+            new Anchor2D(5, 4.2, P0, MU),
+            new Anchor2D(2.5, 4.2, P0, MU),
+            new Anchor2D(0, 4.2, P0, MU),
     };
 
-    private static final float NLOS_DETECTION_THRESHOLD = (float) 30;
+    private static final float NLOS_DETECTION_THRESHOLD = (float) 1.5;
     private static final int MAX_ITERATION_DEPTH = 1;
 
     private static final int SIZE_MARKER = 5;
@@ -79,7 +76,7 @@ public class IndoorLocalization extends Activity {
     private static final float MAX_PEAK = (float) 2.3;
     private static final float MIN_PEAK = (float) 1.8;
     // Acc. Norm Threshold in Step Detection
-    private static final float THETA_ABS_DEG = 5;
+    private static float THETA_ABS_DEG = 0;
     private static final float THETA_ABS_RAD = (float) (THETA_ABS_DEG * (Math.PI / 180));
     // The angle between Mag North and x-axis (CCW)
 
@@ -88,10 +85,14 @@ public class IndoorLocalization extends Activity {
     private static final float TH_MAG = (float) (2 * Math.PI / 180); // in radian
     // Heading Estimation Parameters
 
-    private static final float STEP_CONSTANT = (float) 0.43;
+    private static final float STEP_CONSTANT = (float) 0.45;
     private static Paint RED = new Paint(), BLUE = new Paint(), BLACK = new Paint();
 
     /*---------- Member Variables ----------*/
+    private Socket socket = null;
+    private DataOutputStream dos = null;
+    private ConnectionTask cTask = null;
+
     private TextView tv_info;
     private Button btn_start;
     // UI Views
@@ -121,15 +122,18 @@ public class IndoorLocalization extends Activity {
                 return;
             }
 
-            if (!isCalibrated) {
+            /*
+            if (!isRSSCalibrated) {
                 tv_info.setText("RSS Calibrating.." + "\n");
                 for (Anchor2D loc : anchors.values()) {
                     if (!loc.isCalibrated()) {
                         return;
                     }
                 }
-                isCalibrated = true;
+
+                isRSSCalibrated = true;
             }
+            */
 
             switch (event.sensor.getType()) {
                 case Sensor.TYPE_ROTATION_VECTOR:
@@ -150,7 +154,7 @@ public class IndoorLocalization extends Activity {
     };
     private Sensor mSensorLinAcc, mSensorGyro, mSensorRot; // IMU
 
-    private boolean isCalibrated;
+    private boolean isInitialized, isAngleCalibrated;
     private boolean isRun = false;
     private boolean isLOS = false;
 
@@ -227,9 +231,8 @@ public class IndoorLocalization extends Activity {
             if (Arrays.equals(header, PACKET_HEADER)) {
                 getInfo(data);
                 try{
-                    isLOS = updateLSLocation();
+                    //isLOS = updateLSLocation();
                 }catch(Exception e){
-                    //tv_info.setText("{LSEstimation}\n" + e.toString());
                 }
             }
         } catch (Exception e) {
@@ -275,8 +278,6 @@ public class IndoorLocalization extends Activity {
             }else{
                 mapWidth = mapWidth_y;
             }
-            String msg = source + "," + ANCHOR_2Ds[source].getX() + "," + ANCHOR_2Ds[source].getY();
-
         }
         anchors.get(source).addRSS(rss);
     }
@@ -318,11 +319,11 @@ public class IndoorLocalization extends Activity {
             public void onClick(View v) {
                 if (!isRun) {
                     btn_start.setText("Stop");
-                    //init();
                     resume();
                 } else {
                     btn_start.setText("Start");
-                    isCalibrated = false;
+                    //isRSSCalibrated = false;
+                    //isAngleCalibrated = false;
                     for(Anchor2D loc: anchors.values()){
                         loc.clearRSSTable();
                     }
@@ -390,7 +391,7 @@ public class IndoorLocalization extends Activity {
 
             // 3. Connect to Server
             cTask = new ConnectionTask();
-            cTask.execute(serverIP);
+            cTask.execute(SERVERIP);
             init();
         }catch(Exception e){
             tv_info.setText(e.toString());
@@ -399,6 +400,7 @@ public class IndoorLocalization extends Activity {
 
     private void init() {
         PDRLocation2D.resetLocation();
+        currentLocation2D.setLocation((float) 1.5, (float) 1.5);
         mapWidth_x = 1;
         mapWidth_y = 1;
 
@@ -414,7 +416,8 @@ public class IndoorLocalization extends Activity {
         t_max_peak = 0;
         t_step = 0;
 
-        isCalibrated = false;
+        isInitialized = false;
+        isAngleCalibrated = false;
         isStep = false;
         acc_max = 0;
         acc_min = 0;
@@ -430,6 +433,11 @@ public class IndoorLocalization extends Activity {
 
         SensorManager.getRotationMatrixFromVector(rotMat, rot_vector);
         SensorManager.getOrientation(rotMat, orientation);
+
+        if(!isAngleCalibrated){
+            THETA_ABS_DEG = orientation[0];
+            isAngleCalibrated = true;
+        }
 
         azimuth = (-1) * orientation[0]; // CW에서 CCW로 변환
         pitch = orientation[1];
@@ -448,6 +456,14 @@ public class IndoorLocalization extends Activity {
 
     private void updateLocation() {
         try {
+            t_current_s = (float) (System.currentTimeMillis() - t_begin) / (float) 1000;
+
+            if((t_current_s-t_step)>=TIME_STAYING){
+                isLOS = updateLSLocation();
+            }else{
+                isLOS = false;
+            }
+
             if (data_acc != null && data_gyro != null) {
                 updatePDRLocation();
             }
@@ -456,34 +472,46 @@ public class IndoorLocalization extends Activity {
                 if(isLOS){
                     PDRLocation2D.setLocation(LSLocation2D);
                     currentLocation2D.setLocation(LSLocation2D);
-
                     plotCurrentLocation();
                     previousLocation2D.setLocation(currentLocation2D);
                     n_step++;
                 }
                 else{
-                    tv_info.setText("Locating Initial Location...");
+                    tv_info.setText("Locating Initial Location...\n\n");
+                    tv_info.append("Current Location: " + currentLocation2D.getX() + "," + currentLocation2D.getY() + "\n");
+                    tv_info.append("Current LS Location: " + LSLocation2D.getX() + "," + LSLocation2D.getY() + "\n");
+                    for (int i : anchors.keySet()) {
+                        tv_info.append("Source: " + i + ", Raw RSS: " + anchors.get(i).getRawRSS() + ", avg RSS: " + anchors.get(i).getRSS() + "\n");
+                    }
+                    tv_info.append("Scattering Distance: " + scattering_distance);
                 }
             }else{
+                isInitialized = true;
                 if(isLOS){
                     PDRLocation2D.setLocation(LSLocation2D);
                     currentLocation2D.setLocation(LSLocation2D);
+                    tv_info.setText("Location Calibrated\n\n");
                 }else{
                     currentLocation2D.setLocation(PDRLocation2D);
                 }
 
                 plotCurrentLocation();
                 previousLocation2D.setLocation(currentLocation2D);
+
+
+                tv_info.setText("Current Angle: " + azimuth * (180 / Math.PI) + ", Step Length: " + steplength + "\n");
+                tv_info.append("Current Location: " + currentLocation2D.getX() + "," + currentLocation2D.getY() + "\n");
+                for (int i : anchors.keySet()) {
+                    tv_info.append("Source: " + i + ", Raw RSS: " + anchors.get(i).getRawRSS() + ", avg RSS: " + anchors.get(i).getRSS() + "\n");
+                }
+                tv_info.append("Scattering Distance: " + scattering_distance);
             }
         }catch (Exception e){
-            //tv_info.setText("[UpdateLocation()]\n" + e.toString());
         }
     }
 
     private void updatePDRLocation() {
         /*----- Heading Estimation -----*/
-        tv_info.setText("");
-        t_current_s = (float) (System.currentTimeMillis() - t_begin) / (float) 1000;
         dt = t_current_s - t_prior_s;
         t_prior_s = t_current_s;
 
@@ -528,16 +556,13 @@ public class IndoorLocalization extends Activity {
             steplength = STEP_CONSTANT * steplength;
 
             PDRLocation2D.setLocation(PDRLocation2D.getX() + (float) (steplength * Math.cos(angle_cur)), PDRLocation2D.getY() + (float) (steplength * Math.sin(angle_cur)));
+
+            for(Anchor2D anc: anchors.values()){
+                anc.clearRSSTable();
+            }
             // Update PDR Location
         }
         acc_p = acc_norm;
-
-        tv_info.append("Current Location: " + currentLocation2D.getX() + "," + currentLocation2D.getY() + "\n");
-        tv_info.append("Current Angle: " + azimuth * (180 / Math.PI) + ", Step Length: " + steplength + "\n");
-        for (int i : anchors.keySet()) {
-            tv_info.append("Source: " + i + ", Raw RSS: " + anchors.get(i).getRawRSS() + ", avg RSS: " + anchors.get(i).getRSS() + "\n");
-        }
-        tv_info.append("Scattering Distance: " + scattering_distance);
     }
 
     private boolean updateLSLocation() {
@@ -675,10 +700,11 @@ public class IndoorLocalization extends Activity {
         @Override
         protected Integer doInBackground(String... params) {
             try {
-                socket = new Socket(params[0], port);
+                socket = new Socket(params[0], PORT);
                 dos = new DataOutputStream(socket.getOutputStream());
                 publishProgress(CONNECTED);
-            } catch (IOException e) {
+            } catch (IOException e)
+            {
                 e.printStackTrace();
             }
             return null;
@@ -686,7 +712,7 @@ public class IndoorLocalization extends Activity {
 
         protected void onProgressUpdate(Integer... values) {
             if(values[0] == CONNECTED){
-                tv_info.setText("Connected to " + serverIP);
+                tv_info.setText("Connected to " + SERVERIP);
             }
         }
 
