@@ -45,35 +45,39 @@ import uk.co.senab.photoview.PhotoViewAttacher;
 public class IndoorLocalization extends Activity {
     private static final byte[] PACKET_HEADER = new BigInteger("7e4500ffff0000080089", 16).toByteArray();
 
-    //private final String SERVERIP = "192.168.1.103";
-    private final String SERVERIP = "203.252.157.35";
+    private final String SERVERIP = "192.168.1.3";
+    //private final String SERVERIP = "203.252.157.35";
     private final int PORT = 5555;
 
-    private static final int P0 = -42;
-    private static final float MU = (float) 2.5;
+    private static final int P0 = -40;
+    private static final float MU = (float) 2;
     private static final float TIME_STAYING = (float) 2.5;
 
     private static final Anchor2D[] ANCHOR_2Ds = {
             new Anchor2D(1.5, 1.5, P0, MU),
 
             new Anchor2D(0, 0, P0, MU),
-            new Anchor2D(2.5, 0, P0, MU),
+            new Anchor2D(4.5, 0, P0, MU),
+
             new Anchor2D(5, 0, P0, MU),
-            new Anchor2D(5, 4.2, P0, MU),
+
+            new Anchor2D(4.5, 5, P0, MU),
+
             new Anchor2D(2.5, 4.2, P0, MU),
-            new Anchor2D(0, 4.2, P0, MU),
+
+            new Anchor2D(0, 5, P0, MU),
     };
 
-    private static final float NLOS_DETECTION_THRESHOLD = (float) 1.5;
-    private static final int MAX_ITERATION_DEPTH = 1;
+    private static final float NLOS_DETECTION_THRESHOLD = (float) 5;
+    private static final int MAX_ITERATION_DEPTH = 0;
 
     private static final int SIZE_MARKER = 5;
     private static final int SENSOR_INIT_TIME = 100;
     // Sensor Warm-up time in ms
-    private static final float MIN_MAX_INTERVAL = (float) 0.1;
-    private static final float STEP_INTERVAL = (float) 0.2;
+    private static final float MIN_MAX_INTERVAL = (float) 0.05;
+    private static final float STEP_INTERVAL = (float) 0.1;
     // Minimum Intervals in Step Detection
-    private static final float MAX_PEAK = (float) 2.3;
+    private static final float MAX_PEAK = (float) 2;
     private static final float MIN_PEAK = (float) 1.8;
     // Acc. Norm Threshold in Step Detection
     private static float THETA_ABS_DEG = 0;
@@ -102,7 +106,7 @@ public class IndoorLocalization extends Activity {
     private Canvas canvas_map;
     private PhotoViewAttacher mAttacher;
     private int screenWidth_pixel;
-    private float mapWidth_x, mapWidth_y, mapWidth;
+    private float mapWidth_x = 1, mapWidth_y = 1, mapWidth;
     // Map Display
 
     private HashMap<Integer, Anchor2D> anchors;
@@ -121,19 +125,6 @@ public class IndoorLocalization extends Activity {
                 tv_info.setText("Not enough Anchor nodes.. (" + anchors.size() + ")\n");
                 return;
             }
-
-            /*
-            if (!isRSSCalibrated) {
-                tv_info.setText("RSS Calibrating.." + "\n");
-                for (Anchor2D loc : anchors.values()) {
-                    if (!loc.isCalibrated()) {
-                        return;
-                    }
-                }
-
-                isRSSCalibrated = true;
-            }
-            */
 
             switch (event.sensor.getType()) {
                 case Sensor.TYPE_ROTATION_VECTOR:
@@ -181,7 +172,7 @@ public class IndoorLocalization extends Activity {
 
     private float acc_p;            // 이전 가속도
     private float t_max_peak;    // 이전 걸음 시간
-    private float t_step;
+    private float t_step_s;
 
     private boolean isStep;
 
@@ -230,10 +221,6 @@ public class IndoorLocalization extends Activity {
         try {
             if (Arrays.equals(header, PACKET_HEADER)) {
                 getInfo(data);
-                try{
-                    //isLOS = updateLSLocation();
-                }catch(Exception e){
-                }
             }
         } catch (Exception e) {
             return false;
@@ -278,6 +265,7 @@ public class IndoorLocalization extends Activity {
             }else{
                 mapWidth = mapWidth_y;
             }
+            plotAnchors();
         }
         anchors.get(source).addRSS(rss);
     }
@@ -295,6 +283,7 @@ public class IndoorLocalization extends Activity {
         RED.setColor(Color.RED);
         BLUE.setColor(Color.BLUE);
         BLACK.setColor(Color.BLACK);
+        BLACK.setTextSize(20);
 
         DisplayMetrics displaymetrics = new DisplayMetrics();
         getWindowManager().getDefaultDisplay().getMetrics(displaymetrics);
@@ -322,13 +311,8 @@ public class IndoorLocalization extends Activity {
                     resume();
                 } else {
                     btn_start.setText("Start");
-                    //isRSSCalibrated = false;
-                    //isAngleCalibrated = false;
-                    for(Anchor2D loc: anchors.values()){
-                        loc.clearRSSTable();
-                    }
-                    clearMap();
                     pause();
+                    clearMap();
                 }
             }
         });
@@ -339,14 +323,15 @@ public class IndoorLocalization extends Activity {
         isRun = false;
 
         try {
-            cTask.closeSocket();
-            cTask = null;
+            //cTask.closeSocket();
+            //cTask = null;
             mPort.close();
             connection.close();
             mSerialIoManager.stop();
         } catch (IOException e) {
             e.printStackTrace();
         }
+        anchors = new HashMap<>();
     }
 
     private void resume(){
@@ -382,16 +367,16 @@ public class IndoorLocalization extends Activity {
             mExecutor.submit(mSerialIoManager);
 
             // 2. Register Sensors
-            mSensorManager.registerListener(mSensorEventListener, mSensorGyro, SensorManager.SENSOR_DELAY_GAME);
-            mSensorManager.registerListener(mSensorEventListener, mSensorLinAcc, SensorManager.SENSOR_DELAY_GAME);
-            mSensorManager.registerListener(mSensorEventListener, mSensorRot, SensorManager.SENSOR_DELAY_GAME);
+            mSensorManager.registerListener(mSensorEventListener, mSensorGyro, 20000);
+            mSensorManager.registerListener(mSensorEventListener, mSensorLinAcc, 20000);
+            mSensorManager.registerListener(mSensorEventListener, mSensorRot, 20000);
             // 20000us (20ms) sampling time.
             // http://developer.android.com/guide/topics/sensors/sensors_overview.html
             isRun = true;
 
             // 3. Connect to Server
-            cTask = new ConnectionTask();
-            cTask.execute(SERVERIP);
+            //cTask = new ConnectionTask();
+            //cTask.execute(SERVERIP);
             init();
         }catch(Exception e){
             tv_info.setText(e.toString());
@@ -401,8 +386,6 @@ public class IndoorLocalization extends Activity {
     private void init() {
         PDRLocation2D.resetLocation();
         currentLocation2D.setLocation((float) 1.5, (float) 1.5);
-        mapWidth_x = 1;
-        mapWidth_y = 1;
 
         angle_prev = 0;
         angle_mag = 0;
@@ -410,11 +393,14 @@ public class IndoorLocalization extends Activity {
         angle_cur = 0;
         angle_mag_prev = 0;
 
+        mapWidth_x = 1;
+        mapWidth_y = 1;
+
         n_step = -1;
         acc_p = -10;
         t_prior_s = 0;
         t_max_peak = 0;
-        t_step = 0;
+        t_step_s = 0;
 
         isInitialized = false;
         isAngleCalibrated = false;
@@ -457,9 +443,11 @@ public class IndoorLocalization extends Activity {
     private void updateLocation() {
         try {
             t_current_s = (float) (System.currentTimeMillis() - t_begin) / (float) 1000;
+            //isLOS = updateLSLocation();
 
-            if((t_current_s-t_step)>=TIME_STAYING){
+            if((t_current_s- t_step_s)>=TIME_STAYING){
                 isLOS = updateLSLocation();
+                t_step_s = t_current_s;
             }else{
                 isLOS = false;
             }
@@ -477,35 +465,34 @@ public class IndoorLocalization extends Activity {
                     n_step++;
                 }
                 else{
-                    tv_info.setText("Locating Initial Location...\n\n");
-                    tv_info.append("Current Location: " + currentLocation2D.getX() + "," + currentLocation2D.getY() + "\n");
-                    tv_info.append("Current LS Location: " + LSLocation2D.getX() + "," + LSLocation2D.getY() + "\n");
-                    for (int i : anchors.keySet()) {
-                        tv_info.append("Source: " + i + ", Raw RSS: " + anchors.get(i).getRawRSS() + ", avg RSS: " + anchors.get(i).getRSS() + "\n");
+                    if(NLOS_DETECTION_THRESHOLD == 0){
+                        PDRLocation2D.setLocation(1.5f, 1.5f);
+                        currentLocation2D.setLocation(PDRLocation2D);
+                        n_step++;
                     }
-                    tv_info.append("Scattering Distance: " + scattering_distance);
                 }
             }else{
                 isInitialized = true;
                 if(isLOS){
                     PDRLocation2D.setLocation(LSLocation2D);
                     currentLocation2D.setLocation(LSLocation2D);
-                    tv_info.setText("Location Calibrated\n\n");
+                    //tv_info.setText("Location Calibrated\n\n");
                 }else{
                     currentLocation2D.setLocation(PDRLocation2D);
                 }
 
                 plotCurrentLocation();
                 previousLocation2D.setLocation(currentLocation2D);
-
-
-                tv_info.setText("Current Angle: " + azimuth * (180 / Math.PI) + ", Step Length: " + steplength + "\n");
-                tv_info.append("Current Location: " + currentLocation2D.getX() + "," + currentLocation2D.getY() + "\n");
-                for (int i : anchors.keySet()) {
-                    tv_info.append("Source: " + i + ", Raw RSS: " + anchors.get(i).getRawRSS() + ", avg RSS: " + anchors.get(i).getRSS() + "\n");
-                }
-                tv_info.append("Scattering Distance: " + scattering_distance);
+                isLOS = false;
             }
+
+            tv_info.setText("Current Angle: " + azimuth * (180 / Math.PI) + ", Step Length: " + steplength + "\n");
+            tv_info.append("Current Location: " + currentLocation2D.getX() + "," + currentLocation2D.getY() + "\n");
+            tv_info.append("Current LS Location: " + LSLocation2D.getX() + "," + LSLocation2D.getY() + "\n");
+            for (int i : anchors.keySet()) {
+                tv_info.append("Source: " + i + ", Raw RSS: " + anchors.get(i).getRSS() + ", avg RSS: " + anchors.get(i).getRSS() + "\n");
+            }
+            tv_info.append("Scattering Distance: " + scattering_distance);
         }catch (Exception e){
         }
     }
@@ -539,7 +526,7 @@ public class IndoorLocalization extends Activity {
         acc_norm = (float) Math.sqrt(data_acc[0] * data_acc[0] + data_acc[1] * data_acc[1] + data_acc[2] * data_acc[2]);
         steplength = 0;
 
-        if (acc_norm >= MAX_PEAK && acc_norm < acc_p && (t_current_s - t_step) > STEP_INTERVAL && isStep == false) {
+        if (acc_norm >= MAX_PEAK && acc_norm < acc_p && (t_current_s - t_step_s) > STEP_INTERVAL && isStep == false) {
             // On Max Peak
             isStep = true;
             acc_max = acc_p;
@@ -548,7 +535,7 @@ public class IndoorLocalization extends Activity {
             // On Min Peak
             isStep = false;
             n_step++; // 걸음수 추가
-            t_step = t_prior_s;
+            t_step_s = t_prior_s;
 
             acc_min = acc_p;
 
@@ -557,30 +544,91 @@ public class IndoorLocalization extends Activity {
 
             PDRLocation2D.setLocation(PDRLocation2D.getX() + (float) (steplength * Math.cos(angle_cur)), PDRLocation2D.getY() + (float) (steplength * Math.sin(angle_cur)));
 
+            /*
             for(Anchor2D anc: anchors.values()){
                 anc.clearRSSTable();
             }
+            */
             // Update PDR Location
         }
         acc_p = acc_norm;
     }
 
     private boolean updateLSLocation() {
+
         int n = anchors.size();
         if (n < 4) return false; // not enough anchor nodes;
 
-        HashMap<Integer, Float> dist = new HashMap<>(n);
+        HashMap<Integer, Float> dist = new HashMap<>(n); // RSS로 구한 거리
         for (int i : anchors.keySet()) {
-            dist.put(i, (float) Math.pow(10, (anchors.get(i).getP0() - anchors.get(i).getRSS()) / (10 * anchors.get(i).getMU())));
+            dist.put(i, (float) Math.pow(10, (anchors.get(i).getP0() - anchors.get(i).getRawRSS()) / (10 * anchors.get(i).getMU())));
         }
 
-        if(LSEstimation(LSLocation2D, anchors, dist, 0)){
+        // RMSE approach
+        int n_grid = 5;
+        float stepx = (anchors.get(2).getX() - anchors.get(1).getX())/n_grid;
+        float stepy = (anchors.get(6).getY() - anchors.get(1).getY())/n_grid;
+        float min_scattering_distance = 999999;
+
+        for(float x=anchors.get(6).getX();x<=anchors.get(4).getX();x+=stepx){
+            for(float y=anchors.get(1).getY();y<=anchors.get(6).getY();y+=stepy){
+                scattering_distance=0;
+                for(int i : dist.keySet()){
+                    float r_d = (float) Math.sqrt(((anchors.get(i).getX() - x) * (anchors.get(i).getX() - x)) +
+                            ((anchors.get(i).getY() - y) * (anchors.get(i).getY() - y)));
+                    scattering_distance += ((r_d - dist.get(i))*(r_d - dist.get(i)));
+                }
+                scattering_distance = (float) Math.sqrt(scattering_distance/dist.size());
+                if(min_scattering_distance > scattering_distance){
+                    min_scattering_distance = scattering_distance;
+                    LSLocation2D.setLocation(x, y);
+                }
+            }
+        }
+
+        if(scattering_distance < NLOS_DETECTION_THRESHOLD){
+            return true;
+        }
+        return false;
+
+
+        /*
+        // typical LS
+
+        int[] subsets = new int[4];
+
+        for (int i : anchors.keySet()) {
+            for (int j=0; j<subsets.length; j++){
+                if(subsets[j]==0){
+                    subsets[j] = i;
+                    break;
+                }
+
+                if(dist.get(i) <= dist.get(subsets[j])){
+                    for(int k=subsets.length-1;k>j;k--){
+                        subsets[k] = subsets[k-1];
+                    }
+
+                    subsets[j] = i;
+                    break;
+                }
+            }
+        }
+        //tv_info.setText(subsets[0] + "," + subsets[1] + "," + subsets[2] + "," + subsets[3]);
+
+        HashMap<Integer, Anchor2D> subanchors = new HashMap<>();
+        for(int i=0;i<subsets.length;i++){
+            subanchors.put(subsets[i], anchors.get(subsets[i]));
+        }
+
+        if(LSEstimation(LSLocation2D, subanchors, dist, 0)){
             isLOS = true;
             return true;
         }else{
             isLOS = false;
         }
         return false;
+        */
     }
 
     public boolean LSEstimation(Location2D LSLocation2D, HashMap<Integer, Anchor2D> anchors, HashMap<Integer, Float> dist, int depth){
@@ -588,41 +636,58 @@ public class IndoorLocalization extends Activity {
         if(n < 4) return false; // first iteration termination criterion
         if(depth > MAX_ITERATION_DEPTH) return false; // 메모리 부족 현상 회피를 위해 1depth 이상의 재귀는 off
 
+        int[] weight = new int[]{60, 25, 10, 5};
         int[][] subsets = Matrix.getSubsets(anchors.keySet());
+        int div = 0;
+        float x = 0, y = 0;
 
         ArrayList<Location2D> est = new ArrayList<Location2D>();
-        try {
-            double[][] mat_X = new double[n - 2][2];
-            double[][] vec_b = new double[n - 2][1];
+        double[][] mat_X = new double[n - 2][2];
+        double[][] vec_b = new double[n - 2][1];
 
-            for (int i = 0; i < subsets.length; i++) {
-                for (int j = 0; j < subsets[i].length - 1; j++) {
-                    mat_X[j][0] =
-                            2 * (anchors.get(subsets[i][n - 2]).getX() - anchors.get(subsets[i][j]).getX());
-                    mat_X[j][1] =
-                            2 * (anchors.get(subsets[i][n - 2]).getY() - anchors.get(subsets[i][j]).getY());
-                    vec_b[j][0] =
-                            (Math.pow(dist.get(subsets[i][j]), 2) - Math.pow(dist.get(subsets[i][n - 2]), 2))
-                                    - (Math.pow(anchors.get(subsets[i][j]).getX(), 2) - Math.pow(anchors.get(subsets[i][n - 2]).getX(), 2))
-                                    - (Math.pow(anchors.get(subsets[i][j]).getY(), 2) - Math.pow(anchors.get(subsets[i][n - 2]).getY(), 2));
-                }
+        for (int i = 0; i < subsets.length; i++) {
 
+            for (int j = 1; j < subsets[i].length; j++) {
+                mat_X[j-1][0] =
+                        2 * (anchors.get(subsets[i][0]).getX() - anchors.get(subsets[i][j]).getX());
+                mat_X[j-1][1] =
+                        2 * (anchors.get(subsets[i][0]).getY() - anchors.get(subsets[i][j]).getY());
+                vec_b[j-1][0] =
+                        (Math.pow(dist.get(subsets[i][j]), 2) - Math.pow(dist.get(subsets[i][0]), 2))
+                                - (Math.pow(anchors.get(subsets[i][j]).getX(), 2) - Math.pow(anchors.get(subsets[i][0]).getX(), 2))
+                                - (Math.pow(anchors.get(subsets[i][j]).getY(), 2) - Math.pow(anchors.get(subsets[i][0]).getY(), 2));
+            }
+
+            /*
+
+            for (int j = 0; j < subsets[i].length - 1; j++) {
+                mat_X[j][0] =
+                        2 * (anchors.get(subsets[i][n - 2]).getX() - anchors.get(subsets[i][j]).getX());
+                mat_X[j][1] =
+                        2 * (anchors.get(subsets[i][n - 2]).getY() - anchors.get(subsets[i][j]).getY());
+                vec_b[j][0] =
+                        (Math.pow(dist.get(subsets[i][j]), 2) - Math.pow(dist.get(subsets[i][n - 2]), 2))
+                                - (Math.pow(anchors.get(subsets[i][j]).getX(), 2) - Math.pow(anchors.get(subsets[i][n - 2]).getX(), 2))
+                                - (Math.pow(anchors.get(subsets[i][j]).getY(), 2) - Math.pow(anchors.get(subsets[i][n - 2]).getY(), 2));
+            }
+            */
+
+            try {
                 double[][] LSsample =
                         Matrix.matrixMultiplication(Matrix.matrixMultiplication(Matrix.getInverseMatrix(Matrix.matrixMultiplication(Matrix.transposeMatrix(mat_X), mat_X)), Matrix.transposeMatrix(mat_X)), vec_b);
                 if (LSsample != null){
+                    x += LSsample[0][0]*weight[i];
+                    y += LSsample[1][0]* weight[i];
                     est.add(new Location2D(LSsample[0][0], LSsample[1][0]));
+                    div += weight[i];
                 }
+            }catch(org.apache.commons.math3.linear.SingularMatrixException e) {
+                tv_info.setText("Singularity");
+                continue;
             }
-        } catch (org.apache.commons.math3.linear.SingularMatrixException e) {
-            return false;
         }
 
-        float x = 0, y = 0;
-        for (Location2D loc : est) {
-            x += loc.getX();
-            y += loc.getY();
-        }
-        LSLocation2D.setLocation(x / est.size(), y / est.size());
+        LSLocation2D.setLocation(x / div, y / div);
 
         float d;
         scattering_distance = -1;
@@ -641,7 +706,7 @@ public class IndoorLocalization extends Activity {
             return true;
             // 한번 해보고 Threshold 만족하는 경우 바로 리턴.
         }
-        else{
+        /*else{
             // Full iteration NLOS checking
             // Threshold 만족 못하면 next depth iteration 돌입하는 재귀
             // Memory 부족 현상 발생할 수 있으므로 Depth 제한 필요.
@@ -654,12 +719,14 @@ public class IndoorLocalization extends Activity {
                     return true;
             }
         }
+        */
         return false;
     }
 
     private void plotCurrentLocation() {
         clearMap();
-        cTask.notify(String.format("0,%.5f,%.5f", currentLocation2D.getX(), currentLocation2D.getY()));
+        plotAnchors();
+        //cTask.notify(String.format("0,%.5f,%.5f", currentLocation2D.getX(), currentLocation2D.getY()));
         int current_x_converted = (int) (Math.round((currentLocation2D.getX() + ((1.5 * mapWidth) - mapWidth_x) / 2) * (screenWidth_pixel / (mapWidth * 1.5))));
         int current_y_converted = (int) (screenWidth_pixel - Math.round(((currentLocation2D.getY() + ((1.5 * mapWidth) - mapWidth_y) / 2) * (screenWidth_pixel / (mapWidth * 1.5)))));
 
@@ -669,13 +736,18 @@ public class IndoorLocalization extends Activity {
 
     private void clearMap(){
         canvas_map.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
-        plotAnchors();
     }
 
     private void plotAnchors() {
         for(int source:anchors.keySet()){
-            plotRect(anchors.get(source), BLACK);
-            cTask.notify(String.format("%d,%.5f,%.5f", source, ANCHOR_2Ds[source].getX(), ANCHOR_2Ds[source].getY()));
+            int x_converted = (int) (Math.round((anchors.get(source).getX() + ((1.5 * mapWidth) - mapWidth_x) / 2) * (screenWidth_pixel / (mapWidth * 1.5))));
+            int y_converted = (int) (screenWidth_pixel - Math.round(((anchors.get(source).getY() + ((1.5 * mapWidth) - mapWidth_y) / 2) * (screenWidth_pixel / (mapWidth * 1.5)))));
+
+            canvas_map.drawText(source + "", x_converted, y_converted, BLACK);
+            imgv_map.invalidate();
+
+//            plotRect(anchors.get(source), BLACK);
+            //cTask.notify(String.format("%d,%.5f,%.5f", source, ANCHOR_2Ds[source].getX(), ANCHOR_2Ds[source].getY()));
         }
         imgv_map.invalidate();
     }
@@ -683,6 +755,7 @@ public class IndoorLocalization extends Activity {
     private void plotRect(Location2D loc, Paint paint) {
         int x_converted = (int) (Math.round((loc.getX() + ((1.5 * mapWidth) - mapWidth_x) / 2) * (screenWidth_pixel / (mapWidth * 1.5))));
         int y_converted = (int) (screenWidth_pixel - Math.round(((loc.getY() + ((1.5 * mapWidth) - mapWidth_y) / 2) * (screenWidth_pixel / (mapWidth * 1.5)))));
+
         canvas_map.drawRect(
                 (x_converted - SIZE_MARKER), (y_converted - SIZE_MARKER),
                 (x_converted + SIZE_MARKER), (y_converted + SIZE_MARKER), paint);

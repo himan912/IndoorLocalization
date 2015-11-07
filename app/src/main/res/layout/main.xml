@@ -29,7 +29,8 @@
         android:layout_width="match_parent"
         android:layout_height="25dp"
         android:id="@+id/tv_info"
-        android:layout_weight="0.84" />
+        android:layout_weight="0.89"
+        android:nestedScrollingEnabled="false" />
 
     <LinearLayout
         android:layout_width="wrap_content"

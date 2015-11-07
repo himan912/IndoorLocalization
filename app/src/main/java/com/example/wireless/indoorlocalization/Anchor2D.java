@@ -6,7 +6,7 @@ import java.util.ArrayList;
  * Created by wireless on 2015-10-30.
  */
 public class Anchor2D extends Location2D {
-    private final int MAX_WINDOWSIZE = 50;
+    private final int MAX_WINDOWSIZE = 3;
     private ArrayList<Integer> rss_table = new ArrayList<>();
     private int avg_rss = 0;
     private int raw_rss = 0;
@@ -60,8 +60,9 @@ public class Anchor2D extends Location2D {
             if (min > i) min = i;
         }
 
-        avg_rss -= (max + min);
-        avg_rss /= (rss_table.size() - 2);
+        avg_rss /= rss_table.size();
+        //avg_rss -= (max + min);
+        //avg_rss /= (rss_table.size() - 2);
 
         return avg_rss;
     }
