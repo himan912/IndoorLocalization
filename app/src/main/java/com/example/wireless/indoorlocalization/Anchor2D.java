@@ -6,10 +6,12 @@ import java.util.ArrayList;
  * Created by wireless on 2015-10-30.
  */
 public class Anchor2D extends Location2D {
-    private final int MAX_WINDOWSIZE = 3;
+    private final int MAX_WINDOWSIZE = 20;
+    private final int SPIKE = 5;
     private ArrayList<Integer> rss_table = new ArrayList<>();
     private int avg_rss = 0;
     private int raw_rss = 0;
+    private int pre_rss = 0;
 
     private float P0;
     private float MU;
@@ -26,12 +28,15 @@ public class Anchor2D extends Location2D {
         this.MU = MU;
     }
 
-    public void setP0(float P0){
-        this.P0 = P0;
-    }
-
     public void addRSS(int r) {
+        pre_rss = raw_rss;
         raw_rss = r;
+
+        if((rss_table.size() >= MAX_WINDOWSIZE) &&
+                (r>pre_rss+SPIKE || r<pre_rss-SPIKE)){
+            return;
+        }
+
         rss_table.add(raw_rss);
         if (rss_table.size() > MAX_WINDOWSIZE) {
             rss_table.remove(0);
@@ -45,19 +50,11 @@ public class Anchor2D extends Location2D {
         return false;
     }
 
-    public void clearRSSTable() {
-        this.rss_table.clear();
-    }
-
     public int getRSS() {
         avg_rss = 0;
-        int max = -9999;
-        int min = 9999;
 
         for (int i : rss_table) {
             avg_rss += i;
-            if (max < i) max = i;
-            if (min > i) min = i;
         }
 
         avg_rss /= rss_table.size();
@@ -65,10 +62,6 @@ public class Anchor2D extends Location2D {
         //avg_rss /= (rss_table.size() - 2);
 
         return avg_rss;
-    }
-
-    public int getTableSize(){
-        return rss_table.size();
     }
 
     public float getP0(){

@@ -6,7 +6,9 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.PorterDuff;
+import android.graphics.Typeface;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
@@ -69,9 +71,10 @@ public class IndoorLocalization extends Activity {
     };
 
     private static final float NLOS_DETECTION_THRESHOLD = (float) 5;
+    private static float n_compensation = 5;
     private static final int MAX_ITERATION_DEPTH = 0;
 
-    private static final int SIZE_MARKER = 5;
+    private static final int SIZE_MARKER = 10;
     private static final int SENSOR_INIT_TIME = 100;
     // Sensor Warm-up time in ms
     private static final float MIN_MAX_INTERVAL = (float) 0.05;
@@ -90,7 +93,9 @@ public class IndoorLocalization extends Activity {
     // Heading Estimation Parameters
 
     private static final float STEP_CONSTANT = (float) 0.45;
-    private static Paint RED = new Paint(), BLUE = new Paint(), BLACK = new Paint();
+    private static Paint RED = new Paint(), BLACK = new Paint();
+    private static Paint ARROW = new Paint(Paint.ANTI_ALIAS_FLAG), TEXT = new Paint();
+
 
     /*---------- Member Variables ----------*/
     private Socket socket = null;
@@ -281,9 +286,19 @@ public class IndoorLocalization extends Activity {
         anchors = new HashMap<>();
 
         RED.setColor(Color.RED);
-        BLUE.setColor(Color.BLUE);
+        RED.setStyle(Paint.Style.STROKE);
+        RED.setStrokeWidth(5);
+
+        TEXT.setColor(Color.WHITE);
+        TEXT.setTextSize(2*SIZE_MARKER);
+        TEXT.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
         BLACK.setColor(Color.BLACK);
-        BLACK.setTextSize(20);
+
+        ARROW.setStrokeWidth(2);
+        ARROW.setColor(Color.RED);
+        ARROW.setAlpha(80);
+        ARROW.setStyle(Paint.Style.FILL_AND_STROKE);
+        ARROW.setAntiAlias(true);
 
         DisplayMetrics displaymetrics = new DisplayMetrics();
         getWindowManager().getDefaultDisplay().getMetrics(displaymetrics);
@@ -343,6 +358,7 @@ public class IndoorLocalization extends Activity {
 
             if (drivers == null || drivers.size() == 0) {
                 tv_info.setText("No devices attached");
+                btn_start.setText("Start");
                 return;
             }
 
@@ -442,8 +458,8 @@ public class IndoorLocalization extends Activity {
 
     private void updateLocation() {
         try {
+            tv_info.setText("");
             t_current_s = (float) (System.currentTimeMillis() - t_begin) / (float) 1000;
-            //isLOS = updateLSLocation();
 
             if((t_current_s- t_step_s)>=TIME_STAYING){
                 isLOS = updateLSLocation();
@@ -465,6 +481,7 @@ public class IndoorLocalization extends Activity {
                     n_step++;
                 }
                 else{
+                    tv_info.setText("Locating Initial location.\n\n");
                     if(NLOS_DETECTION_THRESHOLD == 0){
                         PDRLocation2D.setLocation(1.5f, 1.5f);
                         currentLocation2D.setLocation(PDRLocation2D);
@@ -476,7 +493,6 @@ public class IndoorLocalization extends Activity {
                 if(isLOS){
                     PDRLocation2D.setLocation(LSLocation2D);
                     currentLocation2D.setLocation(LSLocation2D);
-                    //tv_info.setText("Location Calibrated\n\n");
                 }else{
                     currentLocation2D.setLocation(PDRLocation2D);
                 }
@@ -486,7 +502,7 @@ public class IndoorLocalization extends Activity {
                 isLOS = false;
             }
 
-            tv_info.setText("Current Angle: " + azimuth * (180 / Math.PI) + ", Step Length: " + steplength + "\n");
+            tv_info.append("Current Angle: " + azimuth * (180 / Math.PI) + ", Step Length: " + steplength + "\n");
             tv_info.append("Current Location: " + currentLocation2D.getX() + "," + currentLocation2D.getY() + "\n");
             tv_info.append("Current LS Location: " + LSLocation2D.getX() + "," + LSLocation2D.getY() + "\n");
             for (int i : anchors.keySet()) {
@@ -535,6 +551,7 @@ public class IndoorLocalization extends Activity {
             // On Min Peak
             isStep = false;
             n_step++; // 걸음수 추가
+            n_compensation = 5;
             t_step_s = t_prior_s;
 
             acc_min = acc_p;
@@ -543,18 +560,12 @@ public class IndoorLocalization extends Activity {
             steplength = STEP_CONSTANT * steplength;
 
             PDRLocation2D.setLocation(PDRLocation2D.getX() + (float) (steplength * Math.cos(angle_cur)), PDRLocation2D.getY() + (float) (steplength * Math.sin(angle_cur)));
-
-            /*
-            for(Anchor2D anc: anchors.values()){
-                anc.clearRSSTable();
-            }
-            */
-            // Update PDR Location
         }
         acc_p = acc_norm;
     }
 
     private boolean updateLSLocation() {
+        if(n_compensation <= 1) n_compensation = 1;
 
         int n = anchors.size();
         if (n < 4) return false; // not enough anchor nodes;
@@ -564,20 +575,37 @@ public class IndoorLocalization extends Activity {
             dist.put(i, (float) Math.pow(10, (anchors.get(i).getP0() - anchors.get(i).getRawRSS()) / (10 * anchors.get(i).getMU())));
         }
 
-        // RMSE approach
-        int n_grid = 5;
-        float stepx = (anchors.get(2).getX() - anchors.get(1).getX())/n_grid;
-        float stepy = (anchors.get(6).getY() - anchors.get(1).getY())/n_grid;
+        // RMSE approach (ML)
+        float space = (float) 0.1 * n_compensation;
+        int n_grid = 3;
         float min_scattering_distance = 999999;
+        boolean checkall = false;
 
-        for(float x=anchors.get(6).getX();x<=anchors.get(4).getX();x+=stepx){
-            for(float y=anchors.get(1).getY();y<=anchors.get(6).getY();y+=stepy){
+        float upperbound = currentLocation2D.getY() + 3*space;
+        float lowerbound = currentLocation2D.getY() - 3*space;
+        float leftbound = currentLocation2D.getX() - 3*space;
+        float rightbound = currentLocation2D.getX() + 3*space;
+
+        if(lowerbound > mapWidth_y || upperbound < 0 || leftbound > mapWidth_x || rightbound < 0){
+            checkall = true;
+        }
+
+        for(float dx=-(n_grid*space); dx<=(n_grid*space); dx+=space){
+            for(float dy=-(n_grid*space); dy<=(n_grid*space); dy+=space){
                 scattering_distance=0;
+                float x = currentLocation2D.getX() + dx;
+                float y = currentLocation2D.getY() + dy;
+
+                if((checkall == false) && (x<0 || y<0 || x>mapWidth_x || y>mapWidth_y)){
+                    continue;
+                }
+
                 for(int i : dist.keySet()){
                     float r_d = (float) Math.sqrt(((anchors.get(i).getX() - x) * (anchors.get(i).getX() - x)) +
                             ((anchors.get(i).getY() - y) * (anchors.get(i).getY() - y)));
                     scattering_distance += ((r_d - dist.get(i))*(r_d - dist.get(i)));
                 }
+
                 scattering_distance = (float) Math.sqrt(scattering_distance/dist.size());
                 if(min_scattering_distance > scattering_distance){
                     min_scattering_distance = scattering_distance;
@@ -587,6 +615,7 @@ public class IndoorLocalization extends Activity {
         }
 
         if(scattering_distance < NLOS_DETECTION_THRESHOLD){
+            n_compensation--;
             return true;
         }
         return false;
@@ -727,10 +756,21 @@ public class IndoorLocalization extends Activity {
         clearMap();
         plotAnchors();
         //cTask.notify(String.format("0,%.5f,%.5f", currentLocation2D.getX(), currentLocation2D.getY()));
-        int current_x_converted = (int) (Math.round((currentLocation2D.getX() + ((1.5 * mapWidth) - mapWidth_x) / 2) * (screenWidth_pixel / (mapWidth * 1.5))));
-        int current_y_converted = (int) (screenWidth_pixel - Math.round(((currentLocation2D.getY() + ((1.5 * mapWidth) - mapWidth_y) / 2) * (screenWidth_pixel / (mapWidth * 1.5)))));
+        int x_converted = (int) (Math.round((currentLocation2D.getX() + ((1.5 * mapWidth) - mapWidth_x) / 2) * (screenWidth_pixel / (mapWidth * 1.5))));
+        int y_converted = (int) (screenWidth_pixel - Math.round(((currentLocation2D.getY() + ((1.5 * mapWidth) - mapWidth_y) / 2) * (screenWidth_pixel / (mapWidth * 1.5)))));
 
-        canvas_map.drawCircle(current_x_converted, current_y_converted, SIZE_MARKER, RED);
+        Path path = new Path();
+        path.setFillType(Path.FillType.EVEN_ODD);
+        path.moveTo((float) (x_converted + 4*SIZE_MARKER * Math.cos(-azimuth)), (float) (y_converted + 4*SIZE_MARKER * Math.sin(-azimuth)));
+        path.lineTo((float) (x_converted - 2*SIZE_MARKER * Math.sin(-azimuth)), (float) (y_converted + 2*SIZE_MARKER * Math.cos(-azimuth)));
+        path.lineTo((float) (x_converted - 2*SIZE_MARKER * Math.cos(-azimuth)), (float) (y_converted - 2*SIZE_MARKER * Math.sin(-azimuth)));
+        path.lineTo((float) (x_converted + 2*SIZE_MARKER * Math.sin(-azimuth)), (float) (y_converted - 2*SIZE_MARKER * Math.cos(-azimuth)));
+        path.close();
+
+        canvas_map.drawPath(path, ARROW);
+
+        //canvas_map.drawCircle(x_converted, y_converted, 5*scattering_distance*SIZE_MARKER, PINK);
+        canvas_map.drawCircle(x_converted, y_converted, SIZE_MARKER, RED);
         imgv_map.invalidate();
     }
 
@@ -743,10 +783,9 @@ public class IndoorLocalization extends Activity {
             int x_converted = (int) (Math.round((anchors.get(source).getX() + ((1.5 * mapWidth) - mapWidth_x) / 2) * (screenWidth_pixel / (mapWidth * 1.5))));
             int y_converted = (int) (screenWidth_pixel - Math.round(((anchors.get(source).getY() + ((1.5 * mapWidth) - mapWidth_y) / 2) * (screenWidth_pixel / (mapWidth * 1.5)))));
 
-            canvas_map.drawText(source + "", x_converted, y_converted, BLACK);
+            plotRect(anchors.get(source), BLACK);
+            canvas_map.drawText(source + "", x_converted-(SIZE_MARKER/2), y_converted+(SIZE_MARKER-2), TEXT);
             imgv_map.invalidate();
-
-//            plotRect(anchors.get(source), BLACK);
             //cTask.notify(String.format("%d,%.5f,%.5f", source, ANCHOR_2Ds[source].getX(), ANCHOR_2Ds[source].getY()));
         }
         imgv_map.invalidate();
