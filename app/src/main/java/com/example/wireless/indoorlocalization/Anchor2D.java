@@ -6,7 +6,7 @@ import java.util.ArrayList;
  * Created by wireless on 2015-10-30.
  */
 public class Anchor2D extends Location2D {
-    private final int MAX_WINDOWSIZE = 20;
+    private final int MAX_WINDOWSIZE = 10;
     private final int SPIKE = 5;
     private ArrayList<Integer> rss_table = new ArrayList<>();
     private int avg_rss = 0;

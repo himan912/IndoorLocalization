@@ -23,6 +23,7 @@ import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.TextView;
+import android.widget.ToggleButton;
 
 import com.hoho.android.usbserial.driver.UsbSerialDriver;
 import com.hoho.android.usbserial.driver.UsbSerialPort;
@@ -55,6 +56,9 @@ public class IndoorLocalization extends Activity {
     private static final float MU = (float) 2;
     private static final float TIME_STAYING = (float) 2.5;
 
+    private boolean runMLE = false;
+    private boolean runPDR = false;
+
     private static final Anchor2D[] ANCHOR_2Ds = {
             new Anchor2D(1.5, 1.5, P0, MU),
 
@@ -70,8 +74,8 @@ public class IndoorLocalization extends Activity {
             new Anchor2D(0, 5, P0, MU),
     };
 
-    private static final float NLOS_DETECTION_THRESHOLD = (float) 5;
-    private static float n_compensation = 5;
+    private static final float NLOS_DETECTION_THRESHOLD = (float) 3;
+    private static float n_compensation = 0;
     private static final int MAX_ITERATION_DEPTH = 0;
 
     private static final int SIZE_MARKER = 10;
@@ -93,7 +97,7 @@ public class IndoorLocalization extends Activity {
     // Heading Estimation Parameters
 
     private static final float STEP_CONSTANT = (float) 0.45;
-    private static Paint RED = new Paint(), BLACK = new Paint();
+    private static Paint RED = new Paint(), BLACK = new Paint(), BLUE = new Paint();
     private static Paint ARROW = new Paint(Paint.ANTI_ALIAS_FLAG), TEXT = new Paint();
 
 
@@ -104,6 +108,7 @@ public class IndoorLocalization extends Activity {
 
     private TextView tv_info;
     private Button btn_start;
+    private ToggleButton tbtn_mle, tbtn_pdr;
     // UI Views
 
     private ImageView imgv_map;
@@ -167,7 +172,7 @@ public class IndoorLocalization extends Activity {
     private Location2D PDRLocation2D = new Location2D(0,0);
     private Location2D LSLocation2D = new Location2D(0,0);
     private Location2D currentLocation2D = new Location2D(0,0);
-    private Location2D previousLocation2D = new Location2D(0,0);
+    private Location2D priorLSLocation2D = new Location2D(0,0);
 
     private float scattering_distance;
     private int n_step;
@@ -289,6 +294,10 @@ public class IndoorLocalization extends Activity {
         RED.setStyle(Paint.Style.STROKE);
         RED.setStrokeWidth(5);
 
+        BLUE.setColor(Color.BLUE);
+        BLUE.setStyle(Paint.Style.STROKE);
+        BLUE.setStrokeWidth(5);
+
         TEXT.setColor(Color.WHITE);
         TEXT.setTextSize(2*SIZE_MARKER);
         TEXT.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
@@ -318,6 +327,31 @@ public class IndoorLocalization extends Activity {
         mSensorGyro = mSensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
         mSensorRot = mSensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
 
+        tbtn_mle = (ToggleButton) findViewById(R.id.tbtn_mle);
+        tbtn_mle.setEnabled(false);
+        tbtn_mle.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                if (tbtn_mle.isChecked()) {
+                    runMLE = true;
+                } else {
+                    runMLE = false;
+                }
+            }
+        });
+        tbtn_pdr = (ToggleButton) findViewById(R.id.tbtn_pdr);
+        tbtn_pdr.setEnabled(false);
+        tbtn_pdr.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                if (tbtn_pdr.isChecked()) {
+                    runPDR = true;
+                } else {
+                    runPDR = false;
+                }
+            }
+        });
+
         btn_start = (Button) findViewById(R.id.btn_start);
         btn_start.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
@@ -334,6 +368,10 @@ public class IndoorLocalization extends Activity {
     }
 
     private void pause(){
+        runMLE = false;
+        runPDR = false;
+        tbtn_mle.setEnabled(false);
+        tbtn_pdr.setEnabled(false);
         mSensorManager.unregisterListener(mSensorEventListener);
         isRun = false;
 
@@ -347,10 +385,17 @@ public class IndoorLocalization extends Activity {
             e.printStackTrace();
         }
         anchors = new HashMap<>();
+        clearMap();
     }
 
     private void resume(){
         try {
+            runMLE = true;
+            tbtn_mle.setChecked(true);
+            tbtn_mle.setEnabled(true);
+            runPDR = false;
+            tbtn_pdr.setChecked(false);
+            tbtn_pdr.setEnabled(true);
             // 1. Connect to the device
             mUsbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
             final List<UsbSerialDriver> drivers = UsbSerialProber.getDefaultProber().findAllDrivers(mUsbManager);
@@ -462,53 +507,53 @@ public class IndoorLocalization extends Activity {
             t_current_s = (float) (System.currentTimeMillis() - t_begin) / (float) 1000;
 
             if((t_current_s- t_step_s)>=TIME_STAYING){
-                isLOS = updateLSLocation();
+                if(runMLE){
+                    isLOS = updateLSLocation();
+                }
                 t_step_s = t_current_s;
             }else{
                 isLOS = false;
             }
 
-            if (data_acc != null && data_gyro != null) {
-                updatePDRLocation();
+            if(runPDR){
+                if (data_acc != null && data_gyro != null) {
+                    updatePDRLocation();
+                }
             }
 
             if (isFirstStep()) {
                 if(isLOS){
                     PDRLocation2D.setLocation(LSLocation2D);
                     currentLocation2D.setLocation(LSLocation2D);
-                    plotCurrentLocation();
-                    previousLocation2D.setLocation(currentLocation2D);
+                    plotCurrentLocation(RED);
                     n_step++;
                 }
                 else{
                     tv_info.setText("Locating Initial location.\n\n");
-                    if(NLOS_DETECTION_THRESHOLD == 0){
-                        PDRLocation2D.setLocation(1.5f, 1.5f);
-                        currentLocation2D.setLocation(PDRLocation2D);
-                        n_step++;
-                    }
                 }
             }else{
                 isInitialized = true;
+
                 if(isLOS){
                     PDRLocation2D.setLocation(LSLocation2D);
                     currentLocation2D.setLocation(LSLocation2D);
+                    plotCurrentLocation(RED);
                 }else{
-                    currentLocation2D.setLocation(PDRLocation2D);
+                    if(runPDR) {
+                        currentLocation2D.setLocation(PDRLocation2D);
+                    }
+                    plotCurrentLocation(BLUE);
                 }
-
-                plotCurrentLocation();
-                previousLocation2D.setLocation(currentLocation2D);
                 isLOS = false;
             }
 
             tv_info.append("Current Angle: " + azimuth * (180 / Math.PI) + ", Step Length: " + steplength + "\n");
             tv_info.append("Current Location: " + currentLocation2D.getX() + "," + currentLocation2D.getY() + "\n");
-            tv_info.append("Current LS Location: " + LSLocation2D.getX() + "," + LSLocation2D.getY() + "\n");
+            //tv_info.append("Current LS Location: " + LSLocation2D.getX() + "," + LSLocation2D.getY() + "\n");
             for (int i : anchors.keySet()) {
                 tv_info.append("Source: " + i + ", Raw RSS: " + anchors.get(i).getRSS() + ", avg RSS: " + anchors.get(i).getRSS() + "\n");
             }
-            tv_info.append("Scattering Distance: " + scattering_distance);
+            tv_info.append("MMSE: " + scattering_distance);
         }catch (Exception e){
         }
     }
@@ -551,7 +596,7 @@ public class IndoorLocalization extends Activity {
             // On Min Peak
             isStep = false;
             n_step++; // 걸음수 추가
-            n_compensation = 5;
+            n_compensation = 0;
             t_step_s = t_prior_s;
 
             acc_min = acc_p;
@@ -565,7 +610,8 @@ public class IndoorLocalization extends Activity {
     }
 
     private boolean updateLSLocation() {
-        if(n_compensation <= 1) n_compensation = 1;
+        if(n_compensation >= 3) return false;
+        if(n_compensation == 0) priorLSLocation2D.setLocation(currentLocation2D);
 
         int n = anchors.size();
         if (n < 4) return false; // not enough anchor nodes;
@@ -576,7 +622,7 @@ public class IndoorLocalization extends Activity {
         }
 
         // RMSE approach (ML)
-        float space = (float) 0.1 * n_compensation;
+        float space = (float) 0.5;
         int n_grid = 3;
         float min_scattering_distance = 999999;
         boolean checkall = false;
@@ -601,8 +647,8 @@ public class IndoorLocalization extends Activity {
                 }
 
                 for(int i : dist.keySet()){
-                    float r_d = (float) Math.sqrt(((anchors.get(i).getX() - x) * (anchors.get(i).getX() - x)) +
-                            ((anchors.get(i).getY() - y) * (anchors.get(i).getY() - y)));
+                    //float r_d = (float) Math.sqrt(((anchors.get(i).getX() - x) * (anchors.get(i).getX() - x)) + ((anchors.get(i).getY() - y) * (anchors.get(i).getY() - y)));
+                    float r_d = getDistance(anchors.get(i), new Location2D(x, y));
                     scattering_distance += ((r_d - dist.get(i))*(r_d - dist.get(i)));
                 }
 
@@ -615,7 +661,14 @@ public class IndoorLocalization extends Activity {
         }
 
         if(scattering_distance < NLOS_DETECTION_THRESHOLD){
-            n_compensation--;
+            if(getDistance(priorLSLocation2D, LSLocation2D) <= 1){
+                if(runPDR){
+                    n_compensation++;
+                }
+            }else{
+                n_compensation=0;
+            }
+
             return true;
         }
         return false;
@@ -723,10 +776,10 @@ public class IndoorLocalization extends Activity {
 
         for (int i = 0; i < est.size() - 1; i++) {
             for (int j = i + 1; j < est.size(); j++) {
-                d = (est.get(i).getX() - est.get(j).getX()) * (est.get(i).getX() - est.get(j).getX()) +
-                        (est.get(i).getY() - est.get(j).getY()) * (est.get(i).getY() - est.get(j).getY());
-                if (Math.sqrt(d) > scattering_distance) {
-                    scattering_distance = (float) Math.sqrt(d);
+                d = getDistance(est.get(i), est.get(j));
+                //d = (est.get(i).getX() - est.get(j).getX()) * (est.get(i).getX() - est.get(j).getX()) + (est.get(i).getY() - est.get(j).getY()) * (est.get(i).getY() - est.get(j).getY());
+                if (d > scattering_distance) {
+                    scattering_distance = d;
                 }
             }
         }
@@ -752,7 +805,7 @@ public class IndoorLocalization extends Activity {
         return false;
     }
 
-    private void plotCurrentLocation() {
+    private void plotCurrentLocation(Paint paint) {
         clearMap();
         plotAnchors();
         //cTask.notify(String.format("0,%.5f,%.5f", currentLocation2D.getX(), currentLocation2D.getY()));
@@ -770,12 +823,13 @@ public class IndoorLocalization extends Activity {
         canvas_map.drawPath(path, ARROW);
 
         //canvas_map.drawCircle(x_converted, y_converted, 5*scattering_distance*SIZE_MARKER, PINK);
-        canvas_map.drawCircle(x_converted, y_converted, SIZE_MARKER, RED);
+        canvas_map.drawCircle(x_converted, y_converted, SIZE_MARKER, paint);
         imgv_map.invalidate();
     }
 
     private void clearMap(){
         canvas_map.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
+        imgv_map.invalidate();
     }
 
     private void plotAnchors() {
@@ -796,8 +850,8 @@ public class IndoorLocalization extends Activity {
         int y_converted = (int) (screenWidth_pixel - Math.round(((loc.getY() + ((1.5 * mapWidth) - mapWidth_y) / 2) * (screenWidth_pixel / (mapWidth * 1.5)))));
 
         canvas_map.drawRect(
-                (x_converted - SIZE_MARKER), (y_converted - SIZE_MARKER),
-                (x_converted + SIZE_MARKER), (y_converted + SIZE_MARKER), paint);
+                (x_converted - 2*SIZE_MARKER), (y_converted - 2*SIZE_MARKER),
+                (x_converted + 2*SIZE_MARKER), (y_converted + 2*SIZE_MARKER), paint);
 
         imgv_map.invalidate();
     }
@@ -805,6 +859,10 @@ public class IndoorLocalization extends Activity {
     private boolean isFirstStep() {
         if (n_step == -1) return true;
         else return false;
+    }
+
+    private float getDistance(Location2D loc1, Location2D loc2){
+        return (float) Math.sqrt((loc1.getX() - loc2.getX())*(loc1.getX() - loc2.getX()) + (loc1.getY() - loc2.getY())*(loc1.getY() - loc2.getY()));
     }
 
     class ConnectionTask extends AsyncTask<String, Integer, Integer> {

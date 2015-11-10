@@ -40,6 +40,24 @@
         android:baselineAligned="false"
         android:layout_gravity="right">
 
+        <ToggleButton
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="MLE"
+            android:id="@+id/tbtn_mle"
+            android:checked="false"
+            android:textOff="MMSE OFF"
+            android:textOn="MMSE ON" />
+
+        <ToggleButton
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="PDR"
+            android:id="@+id/tbtn_pdr"
+            android:checked="false"
+            android:textOff="PDR OFF"
+            android:textOn="PDR ON" />
+
         <Button
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
